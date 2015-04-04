@@ -2,7 +2,9 @@ package com.intrbiz.bergamot.result;
 
 import java.sql.Timestamp;
 import java.util.Calendar;
+import java.util.HashSet;
 import java.util.Set;
+import java.util.Stack;
 import java.util.UUID;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -15,6 +17,9 @@ import com.intrbiz.bergamot.io.BergamotTranscoder;
 import com.intrbiz.bergamot.model.ActiveCheck;
 import com.intrbiz.bergamot.model.Alert;
 import com.intrbiz.bergamot.model.Check;
+import com.intrbiz.bergamot.model.Group;
+import com.intrbiz.bergamot.model.Host;
+import com.intrbiz.bergamot.model.Location;
 import com.intrbiz.bergamot.model.NotificationType;
 import com.intrbiz.bergamot.model.RealCheck;
 import com.intrbiz.bergamot.model.Status;
@@ -27,7 +32,9 @@ import com.intrbiz.bergamot.model.message.notification.SendRecovery;
 import com.intrbiz.bergamot.model.message.result.ActiveResultMO;
 import com.intrbiz.bergamot.model.message.result.PassiveResultMO;
 import com.intrbiz.bergamot.model.message.result.ResultMO;
-import com.intrbiz.bergamot.model.message.update.Update;
+import com.intrbiz.bergamot.model.message.update.CheckUpdate;
+import com.intrbiz.bergamot.model.message.update.GroupUpdate;
+import com.intrbiz.bergamot.model.message.update.LocationUpdate;
 import com.intrbiz.bergamot.model.state.CheckState;
 import com.intrbiz.bergamot.model.state.CheckStats;
 import com.intrbiz.bergamot.model.state.CheckTransition;
@@ -145,7 +152,18 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                     this.rescheduleCheck((ActiveCheck<?,?>) check, interval);
                 }
                 // send the general state update notifications
-                this.sendStateUpdate(check);
+                this.sendCheckStateUpdate(db, check, transition);
+                // send group updates
+                if (transition.stateChange || transition.hardChange || transition.alert || transition.recovery || (! transition.nextState.getStatus().equals(transition.previousState.getStatus())))
+                {
+                    // group update
+                    this.sendGroupStateUpdate(db, check, transition);
+                    // location update
+                    if (check instanceof Host)
+                    {
+                        this.sendLocationStateUpdate(db, (Host) check, transition);
+                    }
+                }
                 // send notifications
                 if (transition.alert)
                 {
@@ -161,12 +179,59 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         }
     }
 
-    protected void sendStateUpdate(Check<?, ?> check)
+    /**
+     * Update listeners as to the recent state change for the given check
+     */
+    protected void sendCheckStateUpdate(BergamotDB db, Check<?, ?> check, Transition transition)
     {
-        CheckState state = check.getState();
-        logger.info("State update " + check + " is " + state.isOk() + " " + state.isHard() + " " + state.getStatus() + " " + state.getOutput());
         // send the update
-        this.publishUpdate(check, new Update(check.toMO()));
+        this.publishCheckUpdate(check, new CheckUpdate(check.toStubMO()));
+    }
+    
+    /**
+     * Update listeners as to the changed state of the groups the given check is a member of
+     */
+    protected void sendGroupStateUpdate(BergamotDB db, Check<?, ?> check, Transition transition)
+    {
+        // send updates for all groups this check is in
+        Set<UUID> updated = new HashSet<UUID>();
+        Stack<Group> groups = new Stack<Group>();
+        groups.addAll(check.getGroups());
+        while (! groups.empty())
+        {
+            Group group = groups.pop();
+            if (! updated.contains(group.getId()))
+            {
+                updated.add(group.getId());
+                // send update for group
+                this.publishGroupUpdate(group, new GroupUpdate(group.toStubMO()));
+                // recurse up the chain
+                groups.addAll(group.getGroups());
+            }
+        }
+    }
+    
+    /**
+     * Update listeners as to the changed state of the locations the given host is a member of
+     */
+    protected void sendLocationStateUpdate(BergamotDB db, Host check, Transition transition)
+    {
+        // send updates for all locations this check is in
+        Set<UUID> updated = new HashSet<UUID>();
+        Stack<Location> locations = new Stack<Location>();
+        if (check.getLocation() != null) locations.add(check.getLocation());
+        while (! locations.empty())
+        {
+            Location location = locations.pop();
+            if (! updated.contains(location.getId()))
+            {
+                updated.add(location.getId());
+                // send update for location
+                this.publishLocationUpdate(location, new LocationUpdate(location.toStubMO()));
+                // recurse up the chain
+                if (location.getLocation() != null) locations.add(location.getLocation());
+            }
+        }
     }
 
     protected <T extends CheckNotification> T createNotification(Check<?, ?> check, Alert alertRecord, Calendar now, NotificationType type, Supplier<T> ctor)
@@ -345,7 +410,7 @@ public class DefaultResultProcessor extends AbstractResultProcessor
             db.setCheckState(referencedByState);
             db.commit();
             // send the general state update notifications
-            this.sendStateUpdate(referencedBy);
+            this.sendCheckStateUpdate(db, referencedBy, null);
             // send notifications
             // only send notifications when a dependent check has reached a hard state change
             if (isStateChange && transition.hardChange)
