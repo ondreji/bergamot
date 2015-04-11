@@ -2,8 +2,10 @@ package com.intrbiz.bergamot.config;
 
 import java.io.File;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -66,10 +68,45 @@ public class NagiosConfigConverter
      */
     private Map<String, HostCfg> hostTemplates = new HashMap<String, HostCfg>();
     
+    /**
+     * Site parameters in use we need to add
+     */
+    private Set<String> siteParameters = new HashSet<String>();
+    
+    /**
+     * MacroFrame used to translate command lines
+     */
+    private MacroFrame macroFrame;
+    
+    /**
+     * Map probable NRPE commands to our auto generated NRPE commands
+     */
+    private Map<String, String> nrpeCommands = new HashMap<String, String>();
+    
     private File baseDir;
 
     public NagiosConfigConverter()
     {
+        // setup the macro frame we will use to translate commands
+        this.macroFrame = new MacroFrame();
+        this.macroFrame.clearPrototypes();
+        // we don't parse resources.cfg
+        // map user macros to site parameters
+        // assume that USER1 == plugin path
+        this.macroFrame.put("USER1", "#{nagios.path}");
+        for (int i = 2; i < 257; i++)
+        {
+            this.macroFrame.put("USER" + i, "#{nagios.user" + i + "}");
+        }
+        // default stuff
+        this.macroFrame.put("HOSTADDRESS", "#{host.address}");
+        this.macroFrame.put("HOSTNAME", "#{host.name}");
+        this.macroFrame.put("SERVICEDESCRIPTION", "#{service.name}");
+        // args
+        for (int i = 1; i < 33; i++)
+        {
+            this.macroFrame.put("ARG" + i, "#{arg" + i + "}");
+        }
     }
     
     public NagiosConfigConverter debugOn()
@@ -118,6 +155,12 @@ public class NagiosConfigConverter
         this.linkServices();
         this.linkHostgroups();
         this.linkServicegroups();
+        // handle site parameters
+        this.config.addParameter(new CfgParameter("nagios.path", null, null, "/usr/lib/nagios/plugins"));
+        for (String parameter : this.siteParameters)
+        {
+            this.config.addParameter(new CfgParameter(parameter, null, null, ""));
+        }
         //
         return this.config;
     }
@@ -285,40 +328,57 @@ public class NagiosConfigConverter
     {
         for (NagiosCommandCfg cfg : this.nagiosConfig.getCommands())
         {
-            // convert the command
-            CommandCfg command = new CommandCfg();
-            command.setLoadedFrom(convertFile(cfg.getLoadedFrom()));
-            command.setTemplate(cfg.isRegister() == null || cfg.isRegister() == false ? true : null);
-            command.setName(command.getTemplateBooleanValue() ? cfg.getName() : cfg.getCommandName());
-            command.setEngine("nagios");
-            // command_line parameter
-            String commandLine = cfg.getCommandLine();
-            if (commandLine != null)
+            if ("check_nrpe".equalsIgnoreCase(cfg.getCommandName()))
             {
-                // convert the macros
-                MacroFrame frame = new MacroFrame();
-                frame.clearPrototypes();
-                // resources
-                frame.put("USER1", "#{nagios.path}");
-                for (int i = 2; i < 33; i++)
-                {
-                    frame.put("USER" + i, "#{nagios.user" + i + "}");
-                }
-                // default stuff
-                frame.put("HOSTADDRESS", "#{host.address}");
-                frame.put("HOSTNAME", "#{host.name}");
-                frame.put("SERVICEDESCRIPTION", "#{service.name}");
-                // args
-                for (int i = 1; i < 17; i++)
-                {
-                    frame.put("ARG" + i, "#{arg" + i + "}");
-                }
-                commandLine = MacroProcessor.applyMacros(commandLine, frame);
-                // add the param
-                command.addParameter(new CfgParameter("command_line", null, null, commandLine));
+                // override the default nagios command with a bergamot specific command
+                CommandCfg command = new CommandCfg();
+                command.setLoadedFrom(new File(this.baseDir, "nrpe_commands.xml"));
+                command.setName("check_nrpe");
+                command.setEngine("nrpe");
+                command.setSummary("Check NRPE");
+                command.setDescription("Check NRPE using the Bergamot NRPE worker");
+                // parameters
+                command.addParameter(new CfgParameter("command", "The NRPE command name", null, "#{arg1}"));
+                command.addParameter(new CfgParameter("host",    "The NRPE host",         null, "#{host.address}"));
+                // add
+                this.config.addObject(command);
             }
-            // add
-            this.config.getCommands().add(command);
+            else
+            {
+                // convert the command
+                CommandCfg command = new CommandCfg();
+                command.setLoadedFrom(convertFile(cfg.getLoadedFrom()));
+                command.setTemplate(cfg.isRegister() == null || cfg.isRegister() == false ? true : null);
+                command.setName(command.getTemplateBooleanValue() ? cfg.getName() : cfg.getCommandName());
+                command.setEngine("nagios");
+                // command_line parameter
+                String commandLine = cfg.getCommandLine();
+                if (commandLine != null)
+                {
+                    // extract the macros used
+                    Set<String> macros = MacroProcessor.extractMacros(commandLine);
+                    // add any args we found as parameters
+                    // collate any site parameters we need
+                    for (String macro : macros)
+                    {
+                        if (macro.startsWith("ARG"))
+                        {
+                            command.addParameter(new CfgParameter(macro.toLowerCase(), null, null, ""));        
+                        }
+                        else if (macro.startsWith("USER") && (! "USER1".equals(macro)))
+                        {
+                            this.siteParameters.add("nagios." + macro.toLowerCase());
+                        }
+                    }
+                    // build the command line
+                    // apply the macros to convert the Nagios expression to a Bergamot expression
+                    commandLine = MacroProcessor.applyMacros(commandLine, this.macroFrame);
+                    // add the param
+                    command.addParameter(new CfgParameter("command_line", null, null, Util.coalesce(commandLine, "")));
+                }
+                // add
+                this.config.getCommands().add(command);
+            }
         }
     }
 
@@ -513,13 +573,44 @@ public class NagiosConfigConverter
         {
             // parse the check command
             NagiosCommandString command = NagiosCommandString.parse(cfg.getCheckCommand());
-            service.setCheckCommand(new CheckCommandCfg());
-            service.getCheckCommand().setCommand(command.getCommandName());
-            // parameters
-            int i = 1;
-            for (String arg : command.getArguments())
+            // special case likely NRPE commands
+            if ("check_nrpe".equalsIgnoreCase(command.getCommandName()) && command.getArguments().size() == 1)
             {
-                service.getCheckCommand().addParameter(new CfgParameter("arg" + i++, null, null, arg));
+                String nrpeCommand = command.getArguments().get(0);
+                // pull out the NRPE command and create a command definition for it
+                String commandName = this.nrpeCommands.get(nrpeCommand);
+                if (commandName == null)
+                {
+                    // command name
+                    commandName = command.getCommandName() + "_" + nrpeCommand;
+                    // build the command def
+                    CommandCfg generatedCommand = new CommandCfg();
+                    generatedCommand.setLoadedFrom(new File(this.baseDir, "nrpe_commands.xml"));
+                    generatedCommand.getInheritedTemplates().add("check_nrpe");
+                    generatedCommand.setName(commandName);
+                    generatedCommand.setSummary("Check NRPE: " + nrpeCommand);
+                    // the command parameter
+                    generatedCommand.addParameter(new CfgParameter("command", null, null, nrpeCommand));
+                    // add the command def
+                    this.config.addObject(generatedCommand);
+                    // map
+                    this.nrpeCommands.put(nrpeCommand, commandName);
+                }
+                // use the command
+                service.setCheckCommand(new CheckCommandCfg());
+                service.getCheckCommand().setCommand(commandName);
+            }
+            else
+            {
+                // generic command
+                service.setCheckCommand(new CheckCommandCfg());
+                service.getCheckCommand().setCommand(command.getCommandName());
+                // parameters
+                int i = 1;
+                for (String arg : command.getArguments())
+                {
+                    service.getCheckCommand().addParameter(new CfgParameter("arg" + i++, null, null, arg));
+                }
             }
         }
         return service;
