@@ -13,6 +13,8 @@ public class BergamotScriptContext
     
     private final Consumer<ResultMO> publishResult;
     
+    private final long start = System.currentTimeMillis();
+    
     public BergamotScriptContext(ExecuteCheck executeCheck, Consumer<ResultMO> publishResult)
     {
         this.executeCheck = executeCheck;
@@ -27,6 +29,11 @@ public class BergamotScriptContext
     public ExecuteCheck getCheck()
     {
         return executeCheck;
+    }
+    
+    public void info(String message)
+    {
+        this.publish(new ActiveResultMO().fromCheck(this.executeCheck).info(message));
     }
     
     public void ok(String message)
@@ -64,8 +71,19 @@ public class BergamotScriptContext
         this.publish(new ActiveResultMO().fromCheck(this.executeCheck).timeout(message));
     }
     
+    public void disconnected(String message)
+    {
+        this.publish(new ActiveResultMO().fromCheck(this.executeCheck).disconnected(message));
+    }
+    
+    public void action(String message)
+    {
+        this.publish(new ActiveResultMO().fromCheck(this.executeCheck).action(message));
+    }
+    
     public void publish(ResultMO resultMO)
     {
+        resultMO.runtime(System.currentTimeMillis() - this.start);
         this.publishResult.accept(resultMO);
     }
     
