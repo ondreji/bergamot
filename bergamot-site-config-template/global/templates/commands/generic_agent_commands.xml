@@ -3,6 +3,7 @@
     
     <command engine="agent" name="check_agent" template="yes">
         <summary>Bergamot Agent: Generic Check</summary>
+        <description>A generic check which executes via the Bergamot Agent</description>
     </command>
     
 </bergamot>

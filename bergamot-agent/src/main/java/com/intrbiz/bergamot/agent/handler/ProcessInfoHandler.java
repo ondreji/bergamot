@@ -108,7 +108,9 @@ public class ProcessInfoHandler implements AgentHandler
                     }
                     catch (SigarException e)
                     {
-                        logger.warn("Cannot get process information", e);
+                        // quite often get errors for short lived PIDs, so ignore, 
+                        // a specific exception class would be nice
+                        if (logger.isDebugEnabled()) logger.debug("Cannot get process information", e);
                     }
                 }
             }

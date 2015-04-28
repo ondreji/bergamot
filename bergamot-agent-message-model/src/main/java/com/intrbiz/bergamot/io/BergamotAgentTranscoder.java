@@ -23,8 +23,10 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.intrbiz.bergamot.model.message.agent.check.CheckAgent;
 import com.intrbiz.bergamot.model.message.agent.check.CheckCPU;
 import com.intrbiz.bergamot.model.message.agent.check.CheckDisk;
+import com.intrbiz.bergamot.model.message.agent.check.CheckDiskIO;
 import com.intrbiz.bergamot.model.message.agent.check.CheckMem;
 import com.intrbiz.bergamot.model.message.agent.check.CheckNetCon;
+import com.intrbiz.bergamot.model.message.agent.check.CheckNetIO;
 import com.intrbiz.bergamot.model.message.agent.check.CheckNetIf;
 import com.intrbiz.bergamot.model.message.agent.check.CheckOS;
 import com.intrbiz.bergamot.model.message.agent.check.CheckProcess;
@@ -37,10 +39,12 @@ import com.intrbiz.bergamot.model.message.agent.ping.AgentPing;
 import com.intrbiz.bergamot.model.message.agent.ping.AgentPong;
 import com.intrbiz.bergamot.model.message.agent.stat.AgentStat;
 import com.intrbiz.bergamot.model.message.agent.stat.CPUStat;
+import com.intrbiz.bergamot.model.message.agent.stat.DiskIOStat;
 import com.intrbiz.bergamot.model.message.agent.stat.DiskStat;
 import com.intrbiz.bergamot.model.message.agent.stat.ExecStat;
 import com.intrbiz.bergamot.model.message.agent.stat.MemStat;
 import com.intrbiz.bergamot.model.message.agent.stat.NetConStat;
+import com.intrbiz.bergamot.model.message.agent.stat.NetIOStat;
 import com.intrbiz.bergamot.model.message.agent.stat.NetIfStat;
 import com.intrbiz.bergamot.model.message.agent.stat.OSStat;
 import com.intrbiz.bergamot.model.message.agent.stat.ProcessStat;
@@ -50,9 +54,13 @@ import com.intrbiz.bergamot.model.message.agent.stat.cpu.CPUInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.cpu.CPUTime;
 import com.intrbiz.bergamot.model.message.agent.stat.cpu.CPUUsage;
 import com.intrbiz.bergamot.model.message.agent.stat.disk.DiskInfo;
+import com.intrbiz.bergamot.model.message.agent.stat.diskio.DiskIOInfo;
+import com.intrbiz.bergamot.model.message.agent.stat.diskio.DiskIORateInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.netcon.NetConInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.netif.NetIfInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.netif.NetRouteInfo;
+import com.intrbiz.bergamot.model.message.agent.stat.netio.NetIOInfo;
+import com.intrbiz.bergamot.model.message.agent.stat.netio.NetIORateInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.process.ProcessInfo;
 import com.intrbiz.bergamot.model.message.agent.stat.who.WhoInfo;
 import com.intrbiz.bergamot.model.message.agent.util.Parameter;
@@ -113,7 +121,17 @@ public class BergamotAgentTranscoder
         NetConStat.class,
         // agent
         CheckAgent.class,
-        AgentStat.class
+        AgentStat.class,
+        // net io
+        CheckNetIO.class,
+        NetIOStat.class,
+        NetIOInfo.class,
+        NetIORateInfo.class,
+        // disk io
+        CheckDiskIO.class,
+        DiskIOStat.class,
+        DiskIOInfo.class,
+        DiskIORateInfo.class
     };
     
     private static final BergamotAgentTranscoder US = new BergamotAgentTranscoder();
