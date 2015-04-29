@@ -151,7 +151,7 @@ public class NetIOHandler implements AgentHandler
         
         public NetIO(String interfaceName)
         {
-            this(interfaceName, 5, TimeUnit.SECONDS, 1, TimeUnit.HOURS);
+            this(interfaceName, 10, TimeUnit.SECONDS, 15, TimeUnit.MINUTES);
         }
         
         public void addSample(NetIOSample sample)
@@ -169,7 +169,10 @@ public class NetIOHandler implements AgentHandler
         
         public boolean canComputeRates()
         {
-            return this.samples.size() > 1;
+            synchronized (this)
+            {
+                return this.samples.size() > 1;
+            }
         }
         
         /**
