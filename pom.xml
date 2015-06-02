@@ -4,7 +4,7 @@
 
 	<groupId>com.intrbiz.bergamot</groupId>
 	<artifactId>bergamot</artifactId>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<packaging>pom</packaging>
 
 	<name>bergamot</name>
@@ -105,97 +105,122 @@
   	  	<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-watcher-api</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-worker-api</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-check-http</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-nrpe</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-util</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-timerange</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-config</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-compat-nagios</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-message-model</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-queue</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-daemon-config</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
    		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-result-processor</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-scheduler</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-jnetraw</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-model</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-agent-message-model</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-crypto-util</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-nagios</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-notification-api</artifactId>
-  			<version>1.0.0</version>
+  			<version>[1.0,)</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-server</artifactId>
+  			<version>[1.0,)</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-config</artifactId>
+  			<version>[1.0,)</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-api-client</artifactId>
+  			<version>[1.0,)</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-config-converter</artifactId>
+  			<version>[1.0,)</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-server-config</artifactId>
+  			<version>[1.0,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.core</groupId>
@@ -353,31 +378,6 @@
   			<groupId>org.mindrot</groupId>
   			<artifactId>jbcrypt</artifactId>
   			<version>0.3m</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-server</artifactId>
-  			<version>1.0.0</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-config</artifactId>
-  			<version>1.0.0</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-api-client</artifactId>
-  			<version>1.0.0</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-config-converter</artifactId>
-  			<version>1.0.0</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-server-config</artifactId>
-  			<version>1.0.0</version>
   		</dependency>
   	</dependencies>
   </dependencyManagement>
