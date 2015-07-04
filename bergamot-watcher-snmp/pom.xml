@@ -5,7 +5,7 @@
   <parent>
     <groupId>com.intrbiz.bergamot</groupId>
     <artifactId>bergamot</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0-RC1</version>
   </parent>
   <artifactId>bergamot-watcher-snmp</artifactId>
   <name>bergamot-watcher-snmp</name>
@@ -38,7 +38,7 @@
 			<plugin>
 				<groupId>com.intrbiz.util</groupId>
 				<artifactId>packaging</artifactId>
-				<version>1.0.0</version>
+				<version>2.0.0-RC1</version>
 				<configuration>
 					<appClass>com.intrbiz.bergamot.watcher.SNMPWatcher</appClass>
 				</configuration>
