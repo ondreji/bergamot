@@ -196,6 +196,26 @@ public class CheckTransitionMO extends MessageObject
      * Does this transition result in a recovery, IE: A hard change from not ok to ok.
      */
     private boolean recovery;
+
+    /**
+     * Was this check previously in downtime
+     */
+    private boolean previousInDowntime;
+
+    /**
+     * Is this check now in downtime
+     */
+    private boolean nextInDowntime;
+    
+    /**
+     * Was this check previously suppressed
+     */
+    private boolean previousSuppressed;
+
+    /**
+     * Is this check now suppressed
+     */
+    private boolean nextSuppressed;
     
     public CheckTransitionMO()
     {
@@ -550,5 +570,45 @@ public class CheckTransitionMO extends MessageObject
     public void setRecovery(boolean recovery)
     {
         this.recovery = recovery;
+    }
+
+    public boolean isPreviousInDowntime()
+    {
+        return this.previousInDowntime;
+    }
+
+    public void setPreviousInDowntime(boolean previousInDowntime)
+    {
+        this.previousInDowntime = previousInDowntime;
+    }
+
+    public boolean isNextInDowntime()
+    {
+        return this.nextInDowntime;
+    }
+
+    public void setNextInDowntime(boolean nextInDowntime)
+    {
+        this.nextInDowntime = nextInDowntime;
+    }
+
+    public boolean isPreviousSuppressed()
+    {
+        return previousSuppressed;
+    }
+
+    public void setPreviousSuppressed(boolean previousSuppressed)
+    {
+        this.previousSuppressed = previousSuppressed;
+    }
+
+    public boolean isNextSuppressed()
+    {
+        return nextSuppressed;
+    }
+
+    public void setNextSuppressed(boolean nextSuppressed)
+    {
+        this.nextSuppressed = nextSuppressed;
     }
 }

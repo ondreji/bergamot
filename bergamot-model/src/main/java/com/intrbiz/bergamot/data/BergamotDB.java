@@ -66,7 +66,7 @@ import com.intrbiz.data.db.compiler.util.SQLScript;
 
 @SQLSchema(
         name = "bergamot", 
-        version = @SQLVersion({2, 4, 0}),
+        version = @SQLVersion({3, 5, 0}),
         tables = {
             Site.class,
             Location.class,
@@ -166,6 +166,12 @@ public abstract class BergamotDB extends DatabaseAdapter
     
     // the schema
     
+    public void flushGlobalCaches()
+    {
+        this.getAdapterCache().removePrefix("get_site_by_name");
+        this.getAdapterCache().removePrefix("get_site");
+    }
+
     // site
     
     @Cacheable
@@ -341,7 +347,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // location
     
     @Cacheable
-    @CacheInvalidate({"get_root_locations.#{site_id}", "get_location_by_name.#{site_id}.*", "get_locations_in_location.#{id}"})
+    @CacheInvalidate({
+        "get_root_locations.#{site_id}", 
+        "get_location_by_name.#{site_id}.*", 
+        "get_locations_in_location.#{id}"
+    })
     @SQLSetter(table = Location.class, name = "set_location", since = @SQLVersion({1, 0, 0}))
     public abstract void setLocation(Location location);
     
@@ -367,10 +377,13 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Location> getRootLocations(@SQLParam("site_id") UUID siteId);
     
     @Cacheable
-    @CacheInvalidate({"get_root_locations.#{this.getSiteId(id)}", "get_location_by_name.#{this.getSiteId(id)}.*", "get_locations_in_location.#{id}"})
+    @CacheInvalidate({
+        "get_root_locations.#{this.getSiteId(id)}", 
+        "get_location_by_name.#{this.getSiteId(id)}.*", 
+        "get_locations_in_location.#{id}"
+    })
     @SQLRemove(table = Location.class, name = "remove_location", since = @SQLVersion({1, 0, 0}))
     public abstract void removeLocation(@SQLParam("id") UUID locationId);
-    
     
     public void addLocationChild(Location parent, Location child)
     {
@@ -413,7 +426,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // group
     
     @Cacheable
-    @CacheInvalidate({"get_group_by_name.#{site_id}.*", "get_root_groups.#{site_id}.*", "get_groups_in_group.#{id}"})
+    @CacheInvalidate({
+        "get_group_by_name.#{site_id}.*", 
+        "get_root_groups.#{site_id}.*", 
+        "get_groups_in_group.#{id}"
+    })
     @SQLSetter(table = Group.class, name = "set_group", since = @SQLVersion({1, 0, 0}))
     public abstract void setGroup(Group group);
     
@@ -441,7 +458,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Group> getGroupsInGroup(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
     @Cacheable
-    @CacheInvalidate({"get_group_by_name.#{this.getSiteId(id)}.*", "get_root_groups.#{this.getSiteId(id)}.*", "get_groups_in_group.#{id}"})
+    @CacheInvalidate({
+        "get_group_by_name.#{this.getSiteId(id)}.*", 
+        "get_root_groups.#{this.getSiteId(id)}.*", 
+        "get_groups_in_group.#{id}"
+    })
     @SQLRemove(table = Group.class, name = "remove_group", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                         "UPDATE bergamot.group SET group_ids=array_remove(group_ids, p_id) WHERE group_ids @> ARRAY[p_id];\n" +
@@ -506,7 +527,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // team
     
     @Cacheable
-    @CacheInvalidate({"get_team_by_name.#{site_id}.*", "get_teams_in_team.#{id}", "get_contacts_in_team.#{id}"})
+    @CacheInvalidate({
+        "get_team_by_name.#{site_id}.*", 
+        "get_teams_in_team.#{id}", 
+        "get_contacts_in_team.#{id}"
+    })
     @SQLSetter(table = Team.class, name = "set_team", since = @SQLVersion({1, 0, 0}))
     public abstract void setTeam(Team team);
     
@@ -528,7 +553,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Team> getTeamsInTeam(@SQLParam(value = "team_id", virtual = true) UUID teamId);
     
     @Cacheable
-    @CacheInvalidate({"get_team_by_name.#{this.getSiteId(id)}.*", "get_teams_in_team.#{id}", "get_contacts_in_team.#{id}"})
+    @CacheInvalidate({
+        "get_team_by_name.#{this.getSiteId(id)}.*", 
+        "get_teams_in_team.#{id}", 
+        "get_contacts_in_team.#{id}"
+    })
     @SQLRemove(table = Team.class, name = "remove_team", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "UPDATE bergamot.team     SET team_ids=array_remove(team_ids, p_id) WHERE team_ids @> ARRAY[p_id];\n" +
@@ -590,7 +619,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // contact
     
     @Cacheable
-    @CacheInvalidate({"get_contact_by_name.#{site_id}.*", "get_contact_by_email.#{site_id}.*", "get_contact_by_name_or_email.#{site_id}.*"})
+    @CacheInvalidate({
+        "get_contact_by_name.#{site_id}.*", 
+        "get_contact_by_email.#{site_id}.*", 
+        "get_contact_by_name_or_email.#{site_id}.*"
+    })
     @SQLSetter(table = Contact.class, name = "set_contact", since = @SQLVersion({1, 0, 0}))
     public abstract void setContact(Contact contact);
     
@@ -627,7 +660,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Contact> getContactsNotInATeam(@SQLParam("site_id") UUID site_id);
     
     @Cacheable
-    @CacheInvalidate({"get_contact_by_name.#{this.getSiteId(id)}.*", "get_contact_by_email.#{this.getSiteId(id)}.*", "get_contact_by_name_or_email.#{this.getSiteId(id)}.*"})
+    @CacheInvalidate({
+        "get_contact_by_name.#{this.getSiteId(id)}.*", 
+        "get_contact_by_email.#{this.getSiteId(id)}.*", 
+        "get_contact_by_name_or_email.#{this.getSiteId(id)}.*"
+    })
     @SQLRemove(table = Contact.class, name = "remove_contact", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "UPDATE bergamot.host     SET contact_ids=array_remove(contact_ids, p_id) WHERE contact_ids @> ARRAY[p_id];\n" +
@@ -710,7 +747,12 @@ public abstract class BergamotDB extends DatabaseAdapter
     // alerts
     
     @Cacheable
-    @CacheInvalidate({"get_all_alerts_for_check.#{check_id}", "get_recovered_alerts_for_check.#{check_id}", "get_alerts_for_check.#{check_id}", "get_current_alert_for_check.#{check_id}"})
+    @CacheInvalidate({
+        "get_all_alerts_for_check.#{check_id}", 
+        "get_recovered_alerts_for_check.#{check_id}", 
+        "get_alerts_for_check.#{check_id}", 
+        "get_current_alert_for_check.#{check_id}"
+    })
     @SQLSetter(table = Alert.class, name = "set_alert", since = @SQLVersion({1, 0, 0}))
     public abstract void setAlert(Alert alert);
     
@@ -719,13 +761,29 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract Alert getAlert(@SQLParam("id") UUID id);
     
     @Cacheable
-    @CacheInvalidate({"get_all_alerts_for_check.*", "get_recovered_alerts_for_check.*", "get_alerts_for_check.*", "get_current_alert_for_check.*"})
+    @CacheInvalidate({
+        "get_all_alerts_for_check.*",
+        "get_all_alerts_for_check_paged.*",
+        "get_recovered_alerts_for_check.*", 
+        "get_alerts_for_check.*", 
+        "get_current_alert_for_check.*"
+    })
     @SQLRemove(table = Alert.class, name = "remove_alert", since = @SQLVersion({1, 0, 0}))
     public abstract void removeAlert(@SQLParam("id") UUID id);
     
     @Cacheable
     @SQLGetter(table = Alert.class, name = "get_all_alerts_for_check", since = @SQLVersion({1, 0, 0}), orderBy = @SQLOrder(value = "raised", direction = Direction.DESC))
     public abstract List<Alert> getAllAlertsForCheck(@SQLParam("check_id") UUID checkId);
+    
+    @Cacheable
+    @SQLGetter(table = Alert.class, name = "get_all_alerts_for_check_paged", since = @SQLVersion({3, 5, 0}), orderBy = @SQLOrder(value = "raised", direction = Direction.DESC))
+    public abstract List<Alert> getAllAlertsForCheck(@SQLParam("check_id") UUID checkId, @SQLLimit() long limit, @SQLOffset() long offset);
+    
+    @Cacheable
+    @SQLGetter(table = Alert.class, name = "get_all_recent_alerts_for_check", since = @SQLVersion({3, 5, 0}), orderBy = @SQLOrder(value = "raised", direction = Direction.DESC),
+        query = @SQLQuery("SELECT * FROM bergamot.alert WHERE check_id = p_check_id AND raised > (now() - p_interval) ORDER BY raised DESC LIMIT p_limit")
+    )
+    public abstract List<Alert> getAllRecentAlertsForCheck(@SQLParam("check_id") UUID checkId, @SQLParam(value = "interval", virtual = true) String interval, @SQLLimit() long limit);
     
     @Cacheable
     @SQLGetter(table = Alert.class, name = "get_recovered_alerts_for_check", since = @SQLVersion({1, 0, 0}), orderBy = @SQLOrder(value = "raised", direction = Direction.DESC),
@@ -771,33 +829,33 @@ public abstract class BergamotDB extends DatabaseAdapter
                               ") " +
                               "SELECT " + 
                               "  p_group_id, " +
-                              "  bool_and(s.ok OR q.suppressed) AS ok, " + 
-                              "  max(CASE WHEN q.suppressed THEN 0 ELSE s.status END)::INTEGER AS status, "+
-                              "  count(CASE WHEN s.status = 0 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS pending_count, "+ 
-                              "  count(CASE WHEN s.status = 2 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS ok_count, "+
-                              "  count(CASE WHEN s.status = 3 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS warning_count, "+
-                              "  count(CASE WHEN s.status = 4 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS critical_count, "+
-                              "  count(CASE WHEN s.status = 5 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS unknown_count, "+
-                              "  count(CASE WHEN s.status = 6 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS timeout_count, "+
-                              "  count(CASE WHEN s.status = 7 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS error_count, "+
-                              "  count(CASE WHEN q.suppressed                      THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, "+
-                              "  count(CASE WHEN s.status = 1 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS info_count, "+
-                              "  count(CASE WHEN s.status = 8 AND NOT q.suppressed THEN 1 ELSE NULL END)::INTEGER AS action_count "+
+                              "  bool_and(s.ok OR s.suppressed OR s.in_downtime) AS ok, " +
+                              "  max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER AS status, " +
+                              "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count, " +  
+                              "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, " +
+                              "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, " +
+                              "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, " +
+                              "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, " +
+                              "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, " +
+                              "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, " +
+                              "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, " + 
+                              "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, " +
+                              "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, " +
+                              "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count, " +  
+                              "  count(s.check_id)::INTEGER                                                                          AS total_checks " +
                               "FROM bergamot.check_state s " +
                               "JOIN ( " +
-                              "    SELECT id, suppressed, group_ids FROM bergamot.host " +
+                              "    SELECT id, group_ids FROM bergamot.host " +
                               "  UNION " + 
-                              "    SELECT id, suppressed, group_ids FROM bergamot.service " +
+                              "    SELECT id, group_ids FROM bergamot.service " +
                               "  UNION  " +
-                              "    SELECT id, suppressed, group_ids FROM bergamot.trap " +
+                              "    SELECT id, group_ids FROM bergamot.trap " +
                               "  UNION " +
-                              "    SELECT id, suppressed, group_ids FROM bergamot.cluster " +
+                              "    SELECT id, group_ids FROM bergamot.cluster " +
                               "  UNION " +
-                              "    SELECT id, suppressed, group_ids FROM bergamot.resource " +
-                              ") q " +
-                              "ON (s.check_id = q.id) " +
-                              "JOIN group_graph g " +
-                              "ON (q.group_ids @> ARRAY[g.id])")
+                              "    SELECT id, group_ids FROM bergamot.resource " +
+                              ") q ON (s.check_id = q.id) " +
+                              "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])")
     )
     public abstract GroupState computeGroupState(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
@@ -820,23 +878,23 @@ public abstract class BergamotDB extends DatabaseAdapter
                               ") "+
                               "SELECT "+ 
                               "  p_location_id, "+
-                              "  bool_and(s.ok OR h.suppressed) AS ok, "+ 
-                              "  max(CASE WHEN h.suppressed THEN 0 ELSE s.status END)::INTEGER AS status, "+
-                              "  count(CASE WHEN s.status = 0 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS pending_count, "+ 
-                              "  count(CASE WHEN s.status = 2 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS ok_count, "+
-                              "  count(CASE WHEN s.status = 3 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS warning_count, "+
-                              "  count(CASE WHEN s.status = 4 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS critical_count, "+
-                              "  count(CASE WHEN s.status = 5 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS unknown_count, "+
-                              "  count(CASE WHEN s.status = 6 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS timeout_count, "+
-                              "  count(CASE WHEN s.status = 7 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS error_count, "+
-                              "  count(CASE WHEN h.suppressed                      THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, "+
-                              "  count(CASE WHEN s.status = 1 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS info_count, "+
-                              "  count(CASE WHEN s.status = 8 AND NOT h.suppressed THEN 1 ELSE NULL END)::INTEGER AS action_count "+
-                              "FROM bergamot.check_state s "+
-                              "JOIN bergamot.host h "+
-                              "ON (s.check_id = h.id) "+
-                              "JOIN location_graph lg "+
-                              "ON (h.location_id = lg.id)")
+                              "  bool_and(s.ok OR s.suppressed OR s.in_downtime) AS ok, " +
+                              "  max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER AS status, " +
+                              "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count, " +  
+                              "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, " +
+                              "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, " +
+                              "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, " +
+                              "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, " +
+                              "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, " +
+                              "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, " +
+                              "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, " + 
+                              "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, " +
+                              "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, " +
+                              "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count, " +  
+                              "  count(s.check_id)::INTEGER                                                                          AS total_checks " +  
+                              "FROM bergamot.check_state s " +
+                              "JOIN bergamot.host h ON (s.check_id = h.id) "+
+                              "JOIN location_graph lg ON (h.location_id = lg.id)")
     )
     public abstract GroupState computeLocationState(@SQLParam(value = "location_id", virtual = true) UUID locationId);
     
@@ -857,7 +915,17 @@ public abstract class BergamotDB extends DatabaseAdapter
     // host
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_host_by_name.#{site_id}.*", "get_host_by_address.#{site_id}.*", "get_host_by_external_ref.#{site_id}.*", "get_host_by_agent_id.#{site_id}.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_host_by_name.#{site_id}.*", 
+        "get_host_by_address.#{site_id}.*", 
+        "get_host_by_external_ref.#{site_id}.*", 
+        "get_host_by_agent_id.#{site_id}.*",
+        "get_hosts_in_location.*",
+        "get_hosts_in_group.*"
+        
+    })
     @SQLSetter(table = Host.class, name = "set_host", since = @SQLVersion({1, 0, 0}))
     public abstract void setHost(Host host);
     
@@ -903,7 +971,16 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Host> listHostsInPool(@SQLParam("site_id") UUID siteId, @SQLParam("pool") int pool);
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_host_by_name.#{this.getSiteId(id)}.*", "get_host_by_address.#{this.getSiteId(id)}.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_host_by_name.#{this.getSiteId(id)}.*", 
+        "get_host_by_address.#{this.getSiteId(id)}.*",
+        "get_host_by_external_ref.#{this.getSiteId(id)}.*", 
+        "get_host_by_agent_id.#{this.getSiteId(id)}.*",
+        "get_hosts_in_location.*",
+        "get_hosts_in_group.*"
+    })
     @SQLRemove(table = Host.class, name = "remove_host", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "DELETE FROM bergamot.comment USING bergamot.alert a WHERE object_id = a.id AND a.check_id = p_id;\n" +
@@ -924,34 +1001,48 @@ public abstract class BergamotDB extends DatabaseAdapter
     {
         service.setHostId(host.getId());
         this.setService(service);
-        this.getAdapterCache().remove("get_services_on_host." + host.getId());
+        this.invalidateServicesOnHost(host.getId());
     }
     
     public void removeServiceFromHost(Host host, Service service)
     {
         service.setHostId(null);
         this.setService(service);
-        this.getAdapterCache().remove("get_services_on_host." + host.getId());
+        this.invalidateServicesOnHost(host.getId());
+    }
+    
+    public void invalidateServicesOnHost(UUID hostId)
+    {
+        this.getAdapterCache().remove("get_services_on_host." + hostId);
     }
     
     public void addTrapToHost(Host host, Trap trap)
     {
         trap.setHostId(host.getId());
         this.setTrap(trap);
-        this.getAdapterCache().remove("get_traps_on_host." + host.getId());
+        this.invalidateTrapsOnHost(host.getId());
     }
     
     public void removeTrapFromHost(Host host, Trap trap)
     {
         trap.setHostId(null);
         this.setTrap(trap);
-        this.getAdapterCache().remove("get_traps_on_host." + host.getId());
+        this.invalidateTrapsOnHost(host.getId());
+    }
+    
+    public void invalidateTrapsOnHost(UUID hostId)
+    {
+        this.getAdapterCache().remove("get_traps_on_host." + hostId);
     }
     
     // service
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}",
+        "get_services_on_host.#{host_id}"
+    })
     @SQLSetter(table = Service.class, name = "set_service", since = @SQLVersion({1, 0, 0}))
     public abstract void setService(Service service);
     
@@ -993,7 +1084,10 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Service> listServicesInPool(@SQLParam("site_id") UUID siteId, @SQLParam("pool") int pool);
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}"
+    })
     @SQLRemove(table = Service.class, name = "remove_service", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "DELETE FROM bergamot.comment USING bergamot.alert a WHERE object_id = a.id AND a.check_id = p_id;\n" +
@@ -1013,7 +1107,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // trap
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}",
+        "get_traps_on_host.#{host_id}"
+    })
     @SQLSetter(table = Trap.class, name = "set_trap", since = @SQLVersion({1, 0, 0}))
     public abstract void setTrap(Trap trap);
     
@@ -1060,7 +1158,10 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Trap> listTrapsThatAreNotOk(@SQLParam("site_id") UUID siteId);
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}"
+    })
     @SQLRemove(table = Trap.class, name = "remove_trap", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "DELETE FROM bergamot.comment USING bergamot.alert a WHERE object_id = a.id AND a.check_id = p_id;\n" +
@@ -1080,7 +1181,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     // cluster
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_cluster_by_name.#{site_id}.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_cluster_by_name.#{site_id}.*"
+    })
     @SQLSetter(table = Cluster.class, name = "set_cluster", since = @SQLVersion({1, 0, 0}))
     public abstract void setCluster(Cluster cluster);
     
@@ -1103,7 +1208,12 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Cluster> getClustersInGroup(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_cluster_by_name.#{this.getSiteId(id)}.*", "get_clusters_referencing_check.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_cluster_by_name.#{this.getSiteId(id)}.*", 
+        "get_clusters_referencing_check.*"
+    })
     @SQLRemove(table = Cluster.class, name = "remove_cluster", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "DELETE FROM bergamot.comment USING bergamot.alert a WHERE object_id = a.id AND a.check_id = p_id;\n" +
@@ -1138,20 +1248,30 @@ public abstract class BergamotDB extends DatabaseAdapter
     {
         resource.setClusterId(cluster.getId());
         this.setResource(resource);
-        this.getAdapterCache().remove("get_resources_on_cluster." + cluster.getId());
+        this.invalidateResourcesOnCluster(cluster.getId());
     }
     
     public void removeResourceFromCluster(Cluster cluster, Resource resource)
     {
         resource.setClusterId(null);
         this.setResource(resource);
-        this.getAdapterCache().remove("get_resources_on_cluster." + cluster.getId());
+        this.invalidateResourcesOnCluster(cluster.getId());
+    }
+    
+    public void invalidateResourcesOnCluster(UUID clusterId)
+    {
+        this.getAdapterCache().remove("get_resources_on_cluster." + clusterId);
     }
     
     // resources
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_resources_referencing_check.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_resources_referencing_check.*",
+        "get_resources_on_cluster.#{cluster_id}"
+    })
     @SQLSetter(table = Resource.class, name = "set_resource", since = @SQLVersion({1, 0, 0}))
     public abstract void setResource(Resource resource);
     
@@ -1180,7 +1300,11 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract List<Resource> getResourcesInGroup(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
     @Cacheable
-    @CacheInvalidate({"check_command.#{id}", "check_state.#{id}", "get_resources_referencing_check.*"})
+    @CacheInvalidate({
+        "check_command.#{id}", 
+        "check_state.#{id}", 
+        "get_resources_referencing_check.*"
+    })
     @SQLRemove(table = Resource.class, name = "remove_resource", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery(
                     "DELETE FROM bergamot.comment USING bergamot.alert a WHERE object_id = a.id AND a.check_id = p_id;\n" +
@@ -1673,6 +1797,42 @@ public abstract class BergamotDB extends DatabaseAdapter
                 "SET " +
                 " status=(CASE WHEN status = 0 THEN 0 ELSE status + 1 END), " +
                 " last_hard_status=(CASE WHEN last_hard_status = 0 THEN 0 ELSE last_hard_status + 1 END) "
+        );
+    }
+    
+    @SQLPatch(name = "add_downtime_indexes", index = 7, type = ScriptType.BOTH, version = @SQLVersion({2, 9, 0}), skip = false)
+    public static SQLScript addDowntimeIndexes()
+    {
+        return new SQLScript(
+                "CREATE INDEX \"downtime_check_id_idx\" ON bergamot.downtime USING btree (check_id)",
+                "CREATE INDEX \"downtime_starts_ends_idx\" ON bergamot.downtime USING btree (starts, ends)"
+        );
+    }
+    
+    @SQLPatch(name = "add_acknowledge_notifications", index = 8, type = ScriptType.UPGRADE, version = @SQLVersion({3, 2, 0}), skip = false)
+    public static SQLScript addAcknowledgeNotifications()
+    {
+        return new SQLScript(
+                "UPDATE bergamot.notifications SET acknowledge_enabled = TRUE",
+                "UPDATE bergamot.notification_engine SET acknowledge_enabled = TRUE"
+        );
+    }
+
+    @SQLPatch(name = "add_downtime_state", index = 9, type = ScriptType.UPGRADE, version = @SQLVersion({3, 3, 0}), skip = false)
+    public static SQLScript addDowntimeState()
+    {
+        return new SQLScript(
+                "UPDATE bergamot.check_state SET in_downtime = FALSE",
+                "UPDATE bergamot.check_transition SET previous_in_downtime = FALSE, next_in_downtime = FALSE"
+        );
+    }
+    
+    @SQLPatch(name = "add_suppressed_state", index = 9, type = ScriptType.UPGRADE, version = @SQLVersion({3, 4, 0}), skip = false)
+    public static SQLScript addSuppressedState()
+    {
+        return new SQLScript(
+                "UPDATE bergamot.check_state SET suppressed = FALSE",
+                "UPDATE bergamot.check_transition SET previous_suppressed = FALSE, next_suppressed = FALSE"
         );
     }
     

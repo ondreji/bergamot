@@ -14,11 +14,14 @@ import com.intrbiz.bergamot.check.http.HTTPCheckBuilder;
 import com.intrbiz.bergamot.check.http.HTTPCheckResponse;
 import com.intrbiz.bergamot.model.message.ParameterMO;
 import com.intrbiz.bergamot.model.message.check.ExecuteCheck;
+import com.intrbiz.bergamot.model.message.reading.ReadingParcelMO;
 import com.intrbiz.bergamot.model.message.result.ActiveResultMO;
 import com.intrbiz.bergamot.model.message.result.ResultMO;
+import com.intrbiz.bergamot.queue.key.ReadingKey;
 import com.intrbiz.bergamot.worker.engine.AbstractExecutor;
 import com.intrbiz.gerald.source.IntelligenceSource;
 import com.intrbiz.gerald.witchcraft.Witchcraft;
+
 
 /**
  * Execute HTTP checks
@@ -49,9 +52,8 @@ public class HTTPExecutor extends AbstractExecutor<HTTPEngine>
     public boolean accept(ExecuteCheck task)
     {
         return super.accept(task) && 
-               (task instanceof ExecuteCheck) && 
-               HTTPEngine.NAME.equalsIgnoreCase(((ExecuteCheck) task).getEngine()) &&
-               (HTTPExecutor.NAME.equalsIgnoreCase(((ExecuteCheck) task).getExecutor()) || Util.isEmpty(((ExecuteCheck) task).getExecutor()));
+               HTTPEngine.NAME.equalsIgnoreCase(task.getEngine()) &&
+               (HTTPExecutor.NAME.equalsIgnoreCase(task.getExecutor()) || Util.isEmpty(task.getExecutor()));
     }
     
     @Override
@@ -97,7 +99,13 @@ public class HTTPExecutor extends AbstractExecutor<HTTPEngine>
                 // submit the result
                 resultMO.setRuntime(response.getRuntime());
                 tctx.stop();
-                resultSubmitter.accept(resultMO); 
+                resultSubmitter.accept(resultMO);
+                // publish some metrics
+                ReadingParcelMO readings = new ReadingParcelMO().fromCheck(executeCheck.getCheckId());
+                readings.longGaugeReading("response-time", "ms", response.getRuntime(), (long) executeCheck.getIntParameter("warning_response_time", 0), (long) executeCheck.getIntParameter("critical_response_time", 0), null, null);
+                readings.longGaugeReading("content-length", "B", (long) response.getResponse().content().capacity());
+                readings.integerGaugeReading("status", null, response.getResponse().getStatus().code());
+                this.publishReading(new ReadingKey(executeCheck.getCheckId(), executeCheck.getProcessingPool()), readings);
             }, 
             (error) -> {
                 tctx.stop();

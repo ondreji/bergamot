@@ -6,32 +6,27 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.Stack;
 import java.util.UUID;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 import org.apache.log4j.Logger;
 
 import com.intrbiz.Util;
 import com.intrbiz.bergamot.data.BergamotDB;
-import com.intrbiz.bergamot.io.BergamotTranscoder;
 import com.intrbiz.bergamot.model.ActiveCheck;
 import com.intrbiz.bergamot.model.Alert;
 import com.intrbiz.bergamot.model.Check;
 import com.intrbiz.bergamot.model.Group;
 import com.intrbiz.bergamot.model.Host;
 import com.intrbiz.bergamot.model.Location;
-import com.intrbiz.bergamot.model.NotificationType;
 import com.intrbiz.bergamot.model.RealCheck;
 import com.intrbiz.bergamot.model.Status;
 import com.intrbiz.bergamot.model.VirtualCheck;
-import com.intrbiz.bergamot.model.message.ContactMO;
 import com.intrbiz.bergamot.model.message.check.ExecuteCheck;
-import com.intrbiz.bergamot.model.message.notification.CheckNotification;
 import com.intrbiz.bergamot.model.message.notification.SendAlert;
 import com.intrbiz.bergamot.model.message.notification.SendRecovery;
 import com.intrbiz.bergamot.model.message.result.ActiveResultMO;
 import com.intrbiz.bergamot.model.message.result.PassiveResultMO;
 import com.intrbiz.bergamot.model.message.result.ResultMO;
+import com.intrbiz.bergamot.model.message.update.AlertUpdate;
 import com.intrbiz.bergamot.model.message.update.CheckUpdate;
 import com.intrbiz.bergamot.model.message.update.GroupUpdate;
 import com.intrbiz.bergamot.model.message.update.LocationUpdate;
@@ -131,7 +126,7 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 // update the state
                 // apply the result
                 Transition transition = this.computeResultTransition((RealCheck<?, ?>) check, check.getState(), resultMO);
-                logger.info("State change for " + check.getType() + "::" + check.getId() + " => hard state change: " + transition.hardChange + ", state change: " + transition.stateChange);
+                logger.info("State change for " + check.getType() + "::" + check.getId() + " => hard state change: " + transition.hardChange + ", state change: " + transition.stateChange + ", in downtime: " + transition.nextState.isInDowntime());
                 // log the transition
                 db.logCheckTransition(transition.toCheckTransition(check.getSite().randomObjectId(), check.getId(), new Timestamp(resultMO.getProcessed())));
                 // update the check state
@@ -154,7 +149,15 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 // send the general state update notifications
                 this.sendCheckStateUpdate(db, check, transition);
                 // send group updates
-                if (transition.stateChange || transition.hardChange || transition.alert || transition.recovery || transition.nextState.getStatus() != transition.previousState.getStatus())
+                if (
+                        transition.stateChange || 
+                        transition.hardChange || 
+                        transition.alert || 
+                        transition.recovery || 
+                        transition.nextState.getStatus() != transition.previousState.getStatus() || 
+                        transition.nextState.isInDowntime() != transition.previousState.isInDowntime() || 
+                        transition.nextState.isSuppressed() != transition.previousState.isSuppressed()
+                )
                 {
                     // group update
                     this.sendGroupStateUpdate(db, check, transition);
@@ -234,90 +237,64 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         }
     }
 
-    protected <T extends CheckNotification> T createNotification(Check<?, ?> check, Alert alertRecord, Calendar now, NotificationType type, Supplier<T> ctor)
-    {
-        T notification = ctor.get();
-        // the site
-        notification.setSite(check.getSite().toMO());
-        notification.setRaised(System.currentTimeMillis());
-        // alert id
-        notification.setAlertId(alertRecord.getId());
-        // compute the engines available
-        final Set<String> enabledEngines = check.getNotifications().getEnginesEnabledAt(type, check.getState().getStatus(), now);
-        // send
-        notification.setRaised(System.currentTimeMillis());
-        notification.setCheck(check.toMO());
-        // to
-        notification.setTo(check.getAllContacts().stream().filter((contact) -> {
-            return contact.getNotifications().isEnabledAt(type, check.getState().getStatus(), now);
-        }).map((contact) -> {
-            ContactMO cmo = contact.toMO();
-            cmo.setEngines(contact.getNotifications().getEnginesEnabledAt(type, check.getState().getStatus(), now).stream().filter((engine) -> {
-                return check.getNotifications().isAllEnginesEnabled() || enabledEngines.contains(engine);
-            }).collect(Collectors.toSet()));
-            return cmo;
-        }).collect(Collectors.toList()));
-        return notification;
-    }
+
 
     protected void sendRecovery(Check<?, ?> check, BergamotDB db)
     {
         logger.warn("Recovery for " + check);
-        if (!check.isSuppressedOrInDowntime())
+        // get the current alert for this check
+        Alert alertRecord = db.getCurrentAlertForCheck(check.getId());
+        if (alertRecord != null)
         {
-            // get the current alert for this check
-            Alert alertRecord = db.getCurrentAlertForCheck(check.getId());
-            if (alertRecord != null)
+            alertRecord.setRecovered(true);
+            alertRecord.setRecoveredAt(new Timestamp(System.currentTimeMillis()));
+            alertRecord.setRecoveredBy(check.getState().getLastCheckId());
+            db.setAlert(alertRecord);
+            // don't send notifications for suppressed checks
+            if (! check.getState().isSuppressedOrInDowntime())
             {
-                alertRecord.setRecovered(true);
-                alertRecord.setRecoveredAt(new Timestamp(System.currentTimeMillis()));
-                alertRecord.setRecoveredBy(check.getState().getLastCheckId());
-                db.setAlert(alertRecord);
                 // send notifications?
                 Calendar now = Calendar.getInstance();
                 // send?
-                if (check.getNotifications().isEnabledAt(NotificationType.RECOVERY, check.getState().getStatus(), now))
+                SendRecovery recovery = alertRecord.createRecoveryNotification(now);
+                if (recovery != null && (! recovery.getTo().isEmpty()))
                 {
-                    SendRecovery recovery = this.createNotification(check, alertRecord, now, NotificationType.RECOVERY, SendRecovery::new);
-                    if (!recovery.getTo().isEmpty())
-                    {
-                        logger.warn("Sending recovery for " + check);
-                        this.publishNotification(check, recovery);
-                    }
-                    else
-                    {
-                        logger.warn("Not sending recovery for " + check + " no contacts configured.");
-                    }
+                    logger.warn("Sending recovery for " + check);
+                    this.publishNotification(check, recovery);
+                }
+                else
+                {
+                    logger.warn("Not sending recovery for " + check);
                 }
             }
+            // publish alert update
+            this.publishAlertUpdate(alertRecord, new AlertUpdate(alertRecord.toMO()));
         }
     }
 
     protected void sendAlert(Check<?, ?> check, BergamotDB db)
     {
         logger.warn("Alert for " + check);
-        if (!check.isSuppressedOrInDowntime())
+        if (! check.getState().isSuppressedOrInDowntime())
         {
             // record the alert
             Alert alertRecord = new Alert(check, check.getState());
             db.setAlert(alertRecord);
             // send the notifications
             Calendar now = Calendar.getInstance();
-            // send?
-            if (check.getNotifications().isEnabledAt(NotificationType.ALERT, check.getState().getStatus(), now))
+            // send
+            SendAlert alert = alertRecord.createAlertNotification(now);
+            if (alert != null && (! alert.getTo().isEmpty()))
             {
-                SendAlert alert = this.createNotification(check, alertRecord, now, NotificationType.ALERT, SendAlert::new);
-                if (!alert.getTo().isEmpty())
-                {
-                    logger.warn("Sending alert for " + check);
-                    System.out.println(new BergamotTranscoder().encodeAsString(alert));
-                    this.publishNotification(check, alert);
-                }
-                else
-                {
-                    logger.warn("Not sending alert for " + check + " no contacts configured.");
-                }
+                logger.warn("Sending alert for " + check);
+                this.publishNotification(check, alert);
             }
+            else
+            {
+                logger.warn("Not sending alert for " + check);
+            }
+            // publish alert update
+            this.publishAlertUpdate(alertRecord, new AlertUpdate(alertRecord.toMO()));
         }
     }
     
@@ -337,6 +314,9 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         nextState.setStatus(resultStatus);
         nextState.setOutput(resultMO.getOutput());
         nextState.setLastCheckTime(new Timestamp(resultMO.getExecuted()));
+        // is this check entering downtime?
+        nextState.setInDowntime(check.isInDowntime());
+        nextState.setSuppressed(check.isSuppressed());
         // compute the transition
         // do we have a state change
         if (currentState.isOk() ^ nextState.isOk())
@@ -423,7 +403,15 @@ public class DefaultResultProcessor extends AbstractResultProcessor
             // send the general state update notifications
             this.sendCheckStateUpdate(db, referencedBy, virtualTransition);
             // send group state updates
-            if (virtualTransition.stateChange || virtualTransition.hardChange || virtualTransition.alert || virtualTransition.recovery || virtualTransition.nextState.getStatus() != virtualTransition.previousState.getStatus())
+            if (
+                    virtualTransition.stateChange || 
+                    virtualTransition.hardChange || 
+                    virtualTransition.alert || 
+                    virtualTransition.recovery || 
+                    virtualTransition.nextState.getStatus() != virtualTransition.previousState.getStatus() ||
+                    virtualTransition.nextState.isInDowntime() != virtualTransition.previousState.isInDowntime() || 
+                    virtualTransition.nextState.isSuppressed() != virtualTransition.previousState.isSuppressed()
+            )
             {
                 this.sendGroupStateUpdate(db, referencedBy, virtualTransition);
             }
@@ -451,6 +439,9 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         nextState.setStatus(status);
         nextState.setOutput(null);
         nextState.setLastCheckTime(new Timestamp(cause.getExecuted()));
+        // is this check entering downtime?
+        nextState.setInDowntime(check.isInDowntime());
+        nextState.setSuppressed(check.isSuppressed());
         // compute the transition
         // do we have a state change
         if (currentState.isOk() ^ nextState.isOk())

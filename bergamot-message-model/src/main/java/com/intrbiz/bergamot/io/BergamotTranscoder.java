@@ -65,13 +65,21 @@ import com.intrbiz.bergamot.model.message.api.update.UpdateEvent;
 import com.intrbiz.bergamot.model.message.api.util.APIPing;
 import com.intrbiz.bergamot.model.message.api.util.APIPong;
 import com.intrbiz.bergamot.model.message.check.ExecuteCheck;
+import com.intrbiz.bergamot.model.message.cluster.manager.request.FlushGlobalCaches;
+import com.intrbiz.bergamot.model.message.cluster.manager.request.InitSite;
+import com.intrbiz.bergamot.model.message.cluster.manager.response.ClusterManagerError;
+import com.intrbiz.bergamot.model.message.cluster.manager.response.FlushedGlobalCaches;
+import com.intrbiz.bergamot.model.message.cluster.manager.response.InitedSite;
 import com.intrbiz.bergamot.model.message.event.control.RegisterWatcher;
 import com.intrbiz.bergamot.model.message.event.watcher.RegisterCheck;
 import com.intrbiz.bergamot.model.message.event.watcher.UnregisterCheck;
 import com.intrbiz.bergamot.model.message.notification.PasswordResetNotification;
 import com.intrbiz.bergamot.model.message.notification.RegisterContactNotification;
+import com.intrbiz.bergamot.model.message.notification.SendAcknowledge;
 import com.intrbiz.bergamot.model.message.notification.SendAlert;
 import com.intrbiz.bergamot.model.message.notification.SendRecovery;
+import com.intrbiz.bergamot.model.message.reading.CheckReadingMO;
+import com.intrbiz.bergamot.model.message.reading.ReadingParcelMO;
 import com.intrbiz.bergamot.model.message.result.ActiveResultMO;
 import com.intrbiz.bergamot.model.message.result.MatchOnAgentId;
 import com.intrbiz.bergamot.model.message.result.MatchOnCheckId;
@@ -94,9 +102,11 @@ import com.intrbiz.bergamot.model.message.state.CheckStateMO;
 import com.intrbiz.bergamot.model.message.state.CheckStatsMO;
 import com.intrbiz.bergamot.model.message.state.CheckTransitionMO;
 import com.intrbiz.bergamot.model.message.state.GroupStateMO;
+import com.intrbiz.bergamot.model.message.update.AlertUpdate;
 import com.intrbiz.bergamot.model.message.update.CheckUpdate;
 import com.intrbiz.bergamot.model.message.update.GroupUpdate;
 import com.intrbiz.bergamot.model.message.update.LocationUpdate;
+import com.intrbiz.gerald.polyakov.io.PolyakovTranscoder;
 import com.intrbiz.queue.QueueEventTranscoder;
 import com.intrbiz.queue.QueueException;
 
@@ -141,15 +151,19 @@ public class BergamotTranscoder
         MatchOnHostExternalRef.class,
         MatchOnServiceExternalRef.class,
         MatchOnTrapExternalRef.class,
+        ReadingParcelMO.class,
+        CheckReadingMO.class,
         // notifications
         SendAlert.class,
         SendRecovery.class,
         PasswordResetNotification.class,
         RegisterContactNotification.class,
+        SendAcknowledge.class,
         // updates
         CheckUpdate.class,
         GroupUpdate.class,
         LocationUpdate.class,
+        AlertUpdate.class,
         // scheduler
         EnableCheck.class,
         DisableCheck.class,
@@ -195,7 +209,13 @@ public class BergamotTranscoder
         SignedAgent.class,
         SignServer.class,
         SignedServer.class,
-        AgentManagerError.class
+        AgentManagerError.class,
+        // cluster manager
+        ClusterManagerError.class,
+        InitSite.class,
+        InitedSite.class,
+        FlushGlobalCaches.class,
+        FlushedGlobalCaches.class
     };
     
     private final ObjectMapper factory = new ObjectMapper();
@@ -209,6 +229,8 @@ public class BergamotTranscoder
         this.factory.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         // add types
         this.addEventType(BergamotTranscoder.CLASSES);
+        // include the metric reading models from Polyakov
+        this.addEventType(PolyakovTranscoder.CLASSES);
     }
     
     public void addEventType(Class<?>... classes)

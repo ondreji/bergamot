@@ -9,11 +9,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.intrbiz.bergamot.model.message.Message;
 import com.intrbiz.bergamot.model.message.ParameterMO;
+import com.intrbiz.bergamot.model.message.ParameterisedMO;
 
 /**
  * The result of a check
  */
-public abstract class ResultMO extends Message
+public abstract class ResultMO extends Message implements ParameterisedMO
 {    
     @JsonProperty("ok")
     private boolean ok;
@@ -155,12 +156,13 @@ public abstract class ResultMO extends Message
     
     // constructor helpers
     
+    @JsonIgnore
     public ResultMO runtime(double runtime)
     {
         this.runtime = runtime;
         return this;
     }
-    
+
     @JsonIgnore
     public ResultMO pending(String output)
     {

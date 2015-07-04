@@ -116,6 +116,18 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
     @SQLColumn(index = 15, name = "last_hard_output", since = @SQLVersion({ 1, 0, 0 }))
     private String lastHardOutput = "Pending";
 
+    /**
+     * Is this check currently in downtime
+     */
+    @SQLColumn(index = 16, name = "in_downtime", since = @SQLVersion({ 3, 3, 0 }))
+    private boolean inDowntime;
+    
+    /**
+     * Is this check currently suppressed
+     */
+    @SQLColumn(index = 17, name = "suppressed", since = @SQLVersion({ 3, 4, 0 }))
+    private boolean suppressed;
+
     public CheckState()
     {
         super();
@@ -295,6 +307,34 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
         this.lastHardOutput = lastHardOutput;
     }
 
+    /**
+     * Is this check currently in downtime
+     */
+    public boolean isInDowntime()
+    {
+        return this.inDowntime;
+    }
+
+    public void setInDowntime(boolean inDowntime)
+    {
+        this.inDowntime = inDowntime;
+    }
+
+    public boolean isSuppressed()
+    {
+        return suppressed;
+    }
+
+    public void setSuppressed(boolean suppressed)
+    {
+        this.suppressed = suppressed;
+    }
+    
+    public boolean isSuppressedOrInDowntime()
+    {
+        return this.suppressed || this.inDowntime;
+    }
+
     @Override
     public CheckStateMO toMO(boolean stub)
     {
@@ -312,6 +352,8 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
         mo.setLastHardOk(this.isLastHardOk());
         mo.setLastHardStatus(this.getLastHardStatus().toString());
         mo.setLastHardOutput(this.getLastHardOutput());
+        mo.setInDowntime(this.isInDowntime());
+        mo.setSuppressed(this.isSuppressed());
         return mo;
     }
     

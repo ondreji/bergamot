@@ -29,6 +29,7 @@ import com.intrbiz.bergamot.ui.api.ContactAPIRouter;
 import com.intrbiz.bergamot.ui.api.DowntimeAPIRouter;
 import com.intrbiz.bergamot.ui.api.GroupAPIRouter;
 import com.intrbiz.bergamot.ui.api.HostAPIRouter;
+import com.intrbiz.bergamot.ui.api.LamplighterAPIRouter;
 import com.intrbiz.bergamot.ui.api.LocationAPIRouter;
 import com.intrbiz.bergamot.ui.api.MetricsAPIRouter;
 import com.intrbiz.bergamot.ui.api.ResourceAPIRouter;
@@ -72,6 +73,7 @@ import com.intrbiz.bergamot.ui.router.admin.SiteAdminRouter;
 import com.intrbiz.bergamot.ui.router.admin.TeamAdminRouter;
 import com.intrbiz.bergamot.ui.router.admin.TimePeriodAdminRouter;
 import com.intrbiz.bergamot.ui.router.admin.TrapAdminRouter;
+import com.intrbiz.bergamot.ui.router.admin.UtilsAdminRouter;
 import com.intrbiz.bergamot.ui.router.agent.AgentRouter;
 import com.intrbiz.bergamot.ui.security.BergamotSecurityEngine;
 import com.intrbiz.bergamot.updater.UpdateServer;
@@ -80,6 +82,7 @@ import com.intrbiz.crypto.SecretKey;
 import com.intrbiz.data.DataManager;
 import com.intrbiz.data.cache.HazelcastCacheProvider;
 import com.intrbiz.gerald.Gerald;
+import com.intrbiz.lamplighter.data.LamplighterDB;
 import com.intrbiz.queue.QueueManager;
 import com.intrbiz.queue.rabbit.RabbitPool;
 import com.intrbiz.util.pool.database.DatabasePool;
@@ -202,6 +205,7 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
         router(new ConfigChangeAdminRouter());
         router(new ConfigAdminRouter());
         router(new SiteAdminRouter());
+        router(new UtilsAdminRouter());
         // API
         router(new APIRouter());
         router(new MetricsAPIRouter());
@@ -224,6 +228,7 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
         router(new StatsAPIRouter());
         router(new UtilAPIRouter());
         router(new AgentAPIRouter());
+        router(new LamplighterAPIRouter());
     }
     
     @Override
@@ -233,7 +238,12 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
         BergamotDB.install();
         try (BergamotDB db = BergamotDB.connect())
         {
-            System.out.println("Database: " + db.getName() + " " + db.getVersion());
+            System.out.println("Database module: " + db.getName() + " " + db.getVersion());
+        }
+        LamplighterDB.install();
+        try (LamplighterDB db = LamplighterDB.connect())
+        {
+            System.out.println("Database module: " + db.getName() + " " + db.getVersion());
         }
         // don't bother starting scheduler etc on ui only nodes
         if (!Boolean.getBoolean("bergamot.ui.only"))
@@ -276,6 +286,7 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
             // compile database
             System.out.println("Compiling DB");
             BergamotDB.load();
+            LamplighterDB.load();
             // setup the cache
             System.out.println("Setting up Hazelcast");
             DataManager.get().registerCacheProvider("hazelcast", new HazelcastCacheProvider(BergamotApp.getApplicationInstanceName()));
