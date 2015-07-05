@@ -6,7 +6,7 @@
 	<parent>
 		<groupId>com.intrbiz.bergamot</groupId>
 		<artifactId>bergamot</artifactId>
-		<version>2.0.0-RC1</version>
+		<version>2.0.0</version>
 	</parent>
 	<artifactId>bergamot-agent-server</artifactId>
 	<name>bergamot-agent-server</name>
