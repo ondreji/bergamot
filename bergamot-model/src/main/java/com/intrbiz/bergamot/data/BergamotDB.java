@@ -749,7 +749,8 @@ public abstract class BergamotDB extends DatabaseAdapter
     @Cacheable
     @CacheInvalidate({
         "get_all_alerts_for_check.#{check_id}", 
-        "get_recovered_alerts_for_check.#{check_id}", 
+        "get_recovered_alerts_for_check.#{check_id}",
+        "get_all_alerts_for_check_paged.#{check_id}.*",
         "get_alerts_for_check.#{check_id}", 
         "get_current_alert_for_check.#{check_id}"
     })
@@ -1732,39 +1733,6 @@ public abstract class BergamotDB extends DatabaseAdapter
               "$BODY$\n" +
               "LANGUAGE plpgsql VOLATILE",
               "ALTER FUNCTION bergamot.validate_contact_ids(uuid[]) OWNER TO bergamot"
-        );
-    }
-    
-    @SQLPatch(name = "add_check_constraints", index = 4, type = ScriptType.BOTH, version = @SQLVersion({1, 6, 0}), skip = false)
-    public static SQLScript addCheckConstraints()
-    {
-        return new SQLScript(
-                // groups
-                "ALTER TABLE bergamot.group ADD CONSTRAINT \"check_groups\" CHECK ( bergamot.validate_group_ids(group_ids) )",
-                // teams
-                "ALTER TABLE bergamot.team    ADD CONSTRAINT \"check_teams\" CHECK ( bergamot.validate_team_ids(team_ids) )",
-                // contacts
-                "ALTER TABLE bergamot.contact ADD CONSTRAINT \"check_teams\" CHECK ( bergamot.validate_team_ids(team_ids) )",
-                // hosts
-                "ALTER TABLE bergamot.host     ADD CONSTRAINT \"check_groups\"   CHECK ( bergamot.validate_group_ids(group_ids) )",
-                "ALTER TABLE bergamot.host     ADD CONSTRAINT \"check_teams\"    CHECK ( bergamot.validate_team_ids(team_ids) )",
-                "ALTER TABLE bergamot.host     ADD CONSTRAINT \"check_contacts\" CHECK ( bergamot.validate_contact_ids(contact_ids) )",
-                // services
-                "ALTER TABLE bergamot.service  ADD CONSTRAINT \"check_groups\"   CHECK ( bergamot.validate_group_ids(group_ids) )",
-                "ALTER TABLE bergamot.service  ADD CONSTRAINT \"check_teams\"    CHECK ( bergamot.validate_team_ids(team_ids) )",
-                "ALTER TABLE bergamot.service  ADD CONSTRAINT \"check_contacts\" CHECK ( bergamot.validate_contact_ids(contact_ids) )",
-                // traps
-                "ALTER TABLE bergamot.trap     ADD CONSTRAINT \"check_groups\"   CHECK ( bergamot.validate_group_ids(group_ids) )",
-                "ALTER TABLE bergamot.trap     ADD CONSTRAINT \"check_teams\"    CHECK ( bergamot.validate_team_ids(team_ids) )",
-                "ALTER TABLE bergamot.trap     ADD CONSTRAINT \"check_contacts\" CHECK ( bergamot.validate_contact_ids(contact_ids) )",
-                // clusters
-                "ALTER TABLE bergamot.cluster  ADD CONSTRAINT \"check_groups\"   CHECK ( bergamot.validate_group_ids(group_ids) )",
-                "ALTER TABLE bergamot.cluster  ADD CONSTRAINT \"check_teams\"    CHECK ( bergamot.validate_team_ids(team_ids) )",
-                "ALTER TABLE bergamot.cluster  ADD CONSTRAINT \"check_contacts\" CHECK ( bergamot.validate_contact_ids(contact_ids) )",
-                // resources
-                "ALTER TABLE bergamot.resource ADD CONSTRAINT \"check_groups\"   CHECK ( bergamot.validate_group_ids(group_ids) )",
-                "ALTER TABLE bergamot.resource ADD CONSTRAINT \"check_teams\"    CHECK ( bergamot.validate_team_ids(team_ids) )",
-                "ALTER TABLE bergamot.resource ADD CONSTRAINT \"check_contacts\" CHECK ( bergamot.validate_contact_ids(contact_ids) )"
         );
     }
     
