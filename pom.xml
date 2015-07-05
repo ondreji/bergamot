@@ -168,7 +168,7 @@
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
   			<artifactId>bergamot-scheduler</artifactId>
-  			<version>1.0.0</version>
+  			<version>${project.version}</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.bergamot</groupId>
@@ -200,6 +200,36 @@
   			<artifactId>bergamot-notification-api</artifactId>
   			<version>${project.version}</version>
   		</dependency>
+  		  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-server</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-config</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-api-client</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-config-converter</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>bergamot-agent-server-config</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
+  		<dependency>
+  			<groupId>com.intrbiz.bergamot</groupId>
+  			<artifactId>lamplighter-model</artifactId>
+  			<version>${project.version}</version>
+  		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.core</groupId>
   			<artifactId>core</artifactId>
@@ -228,12 +258,12 @@
   		<dependency>
   			<groupId>com.intrbiz.gerald</groupId>
   			<artifactId>gerald-the-mole</artifactId>
-  			<version>1.1.0-RC1</version>
+  			<version>[1.1,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.gerald</groupId>
   			<artifactId>polyakov-model</artifactId>
-  			<version>1.1.0-RC1</version>
+  			<version>[1.1,)</version>
   		</dependency>
   		<dependency>
   			<groupId>com.intrbiz.snmp-ib</groupId>
@@ -356,31 +386,6 @@
   			<groupId>org.mindrot</groupId>
   			<artifactId>jbcrypt</artifactId>
   			<version>0.3m</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-server</artifactId>
-  			<version>${project.version}</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-config</artifactId>
-  			<version>${project.version}</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-api-client</artifactId>
-  			<version>${project.version}</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-config-converter</artifactId>
-  			<version>${project.version}</version>
-  		</dependency>
-  		<dependency>
-  			<groupId>com.intrbiz.bergamot</groupId>
-  			<artifactId>bergamot-agent-server-config</artifactId>
-  			<version>${project.version}</version>
   		</dependency>
   	</dependencies>
   </dependencyManagement>
