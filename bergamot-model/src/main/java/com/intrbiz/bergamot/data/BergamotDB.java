@@ -13,6 +13,7 @@ import com.intrbiz.bergamot.config.model.TemplatedObjectCfg;
 import com.intrbiz.bergamot.config.validator.BergamotConfigResolver;
 import com.intrbiz.bergamot.config.validator.BergamotObjectLocator;
 import com.intrbiz.bergamot.model.APIToken;
+import com.intrbiz.bergamot.model.AccessControl;
 import com.intrbiz.bergamot.model.AgentRegistration;
 import com.intrbiz.bergamot.model.Alert;
 import com.intrbiz.bergamot.model.Check;
@@ -30,12 +31,15 @@ import com.intrbiz.bergamot.model.Location;
 import com.intrbiz.bergamot.model.NotificationEngine;
 import com.intrbiz.bergamot.model.Notifications;
 import com.intrbiz.bergamot.model.Resource;
+import com.intrbiz.bergamot.model.SecurityDomain;
+import com.intrbiz.bergamot.model.SecurityDomainMembership;
 import com.intrbiz.bergamot.model.Service;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.model.Team;
 import com.intrbiz.bergamot.model.TimePeriod;
 import com.intrbiz.bergamot.model.Trap;
 import com.intrbiz.bergamot.model.VirtualCheck;
+import com.intrbiz.bergamot.model.state.CheckSavedState;
 import com.intrbiz.bergamot.model.state.CheckState;
 import com.intrbiz.bergamot.model.state.CheckStats;
 import com.intrbiz.bergamot.model.state.CheckTransition;
@@ -66,7 +70,7 @@ import com.intrbiz.data.db.compiler.util.SQLScript;
 
 @SQLSchema(
         name = "bergamot", 
-        version = @SQLVersion({3, 6, 0}),
+        version = @SQLVersion({3, 9, 0}),
         tables = {
             Site.class,
             Location.class,
@@ -93,7 +97,11 @@ import com.intrbiz.data.db.compiler.util.SQLScript;
             ConfigChange.class,
             CheckStats.class,
             CheckTransition.class,
-            AgentRegistration.class
+            AgentRegistration.class,
+            CheckSavedState.class,
+            SecurityDomain.class,
+            SecurityDomainMembership.class,
+            AccessControl.class
         }
 )
 public abstract class BergamotDB extends DatabaseAdapter
@@ -743,6 +751,23 @@ public abstract class BergamotDB extends DatabaseAdapter
     @Cacheable
     @SQLRemove(table = CheckState.class, name = "remove_check_state", since = @SQLVersion({1, 0, 0}))
     public abstract void removeCheckState(@SQLParam("check_id") UUID id);
+    
+    // saved state
+    
+    @Cacheable
+    @SQLSetter(table = CheckSavedState.class, name = "set_check_saved_state", since = @SQLVersion({3, 7, 0}))
+    public abstract void setCheckSavedState(CheckSavedState savedState);
+    
+    @Cacheable
+    @SQLGetter(table = CheckSavedState.class, name = "get_check_saved_state", since = @SQLVersion({3, 7, 0}))
+    public abstract CheckSavedState getCheckSavedState(@SQLParam("check_id") UUID id);
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_check_saved_state.#{check_id}",
+    })
+    @SQLRemove(table = CheckSavedState.class, name = "remove_check_saved_state", since = @SQLVersion({3, 7, 0}))
+    public abstract void removeCheckSavedState(@SQLParam("check_id") UUID id);
     
     // alerts
     
@@ -1620,6 +1645,109 @@ public abstract class BergamotDB extends DatabaseAdapter
             }           
         };
     }
+    
+    // security domains
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_security_domain_by_name.#{this.getSiteId(id)}.*",
+    })
+    @SQLSetter(table = SecurityDomain.class, name = "set_security_domain", since = @SQLVersion({3, 8, 0}))
+    public abstract void setSecurityDomain(SecurityDomain securityDomain);
+    
+    @Cacheable
+    @SQLGetter(table = SecurityDomain.class, name = "get_security_domain", since = @SQLVersion({3, 8, 0}))
+    public abstract SecurityDomain getSecurityDomain(@SQLParam("id") UUID id);
+    
+    @Cacheable
+    @SQLGetter(table = SecurityDomain.class, name = "get_security_domain_by_name", since = @SQLVersion({3, 8, 0}))
+    public abstract SecurityDomain getSecurityDomainByName(@SQLParam("site_id") UUID siteId, @SQLParam("name") String name);
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_security_domain_by_name.#{this.getSiteId(id)}.*",
+    })
+    @SQLRemove(table = SecurityDomain.class, name = "remove_security_domain", since = @SQLVersion({3, 8, 0}))
+    public abstract void removeSecurityDomain(@SQLParam("id") UUID id);
+    
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_security_domain_members.#{security_domain_id}",
+        "get_security_domains_for_check.#{check_id}"
+    })
+    @SQLSetter(table = SecurityDomainMembership.class, name = "set_security_domain_membership", since = @SQLVersion({3, 8, 0}), upsert = false)
+    public abstract void setSecurityDomainMembership(SecurityDomainMembership membership);
+    
+    @Cacheable
+    @SQLGetter(table = SecurityDomainMembership.class, name = "get_security_domain_members", since = @SQLVersion({3, 8, 0}))
+    public abstract List<SecurityDomainMembership> getSecurityDomainMembers(@SQLParam("security_domain_id") UUID securityDomainId);
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_security_domain_members.#{security_domain_id}",
+        "get_security_domains_for_check.#{check_id}"
+    })
+    @SQLRemove(table = SecurityDomainMembership.class, name = "remove_security_domain_membership", since = @SQLVersion({3, 8, 0}))
+    public abstract void removeSecurityDomainMembership(@SQLParam("security_domain_id") UUID securityDomainId, @SQLParam("check_id") UUID checkId);
+    
+    @Cacheable
+    @CacheInvalidate({
+        "get_security_domain_members.*",
+        "get_security_domains_for_check.#{check_id}"
+    })
+    @SQLRemove(table = SecurityDomainMembership.class, name = "remove_security_domain_membership_for_check", since = @SQLVersion({3, 8, 0}))
+    public abstract void removeSecurityDomainMembershipForCheck(@SQLParam("check_id") UUID checkId);
+    
+    
+    @Cacheable
+    @SQLGetter(table = SecurityDomain.class, name = "get_security_domains_for_check", since = @SQLVersion({3, 8, 0}),
+        query = @SQLQuery(
+                "SELECT sd.* "
+                + "FROM bergamot.security_domain sd "
+                + "JOIN bergamot.security_domain_membership sdm ON (sd.id = sdm.security_domain_id) "
+                + "WHERE sdm.check_id = p_check_id"
+        )
+    )
+    public abstract List<SecurityDomain> getSecurityDomainsForCheck(@SQLParam(value = "check_id", virtual = true) UUID checkId);
+    
+    public List<Check<?,?>> getChecksInSecurityDomain(UUID securityDomainId)
+    {
+        List<Check<?,?>> checks = new LinkedList<Check<?,?>>();
+        for (SecurityDomainMembership member : this.getSecurityDomainMembers(securityDomainId))
+        {
+            checks.add(this.getCheck(member.getCheckId()));
+        }
+        return checks;
+    }
+    
+    public void addCheckToSecurityDomain(UUID securityDomainId, UUID checkId)
+    {
+        this.setSecurityDomainMembership(new SecurityDomainMembership(securityDomainId, checkId));
+    }
+    
+    // access controls
+    
+    @Cacheable
+    @SQLSetter(table = AccessControl.class, name = "set_access_control", since = @SQLVersion({3, 8, 0}))
+    public abstract void setAccessControl(AccessControl accessControl);
+    
+    @Cacheable
+    @SQLGetter(table = AccessControl.class, name = "get_access_control", since = @SQLVersion({3, 8, 0}))
+    public abstract AccessControl getAccessControl(@SQLParam("security_domain_id") UUID securityDomainId, @SQLParam("role_id") UUID roleId);
+    
+    @Cacheable
+    @SQLGetter(table = AccessControl.class, name = "get_access_controls_for_security_domain", since = @SQLVersion({3, 8, 0}))
+    public abstract List<AccessControl> getAccessControlsForSecurityDomain(@SQLParam("security_domain_id") UUID securityDomainId);
+    
+    @Cacheable
+    @SQLGetter(table = AccessControl.class, name = "get_access_controls_for_role", since = @SQLVersion({3, 8, 0}))
+    public abstract List<AccessControl> getAccessControlsForRole(@SQLParam("role_id") UUID roleId);
+    
+    @Cacheable
+    @SQLRemove(table = AccessControl.class, name = "remove_access_control", since = @SQLVersion({3, 8, 0}))
+    public abstract void removeAccessControl(@SQLParam("security_domain_id") UUID securityDomainId, @SQLParam("role_id") UUID roleId);
+    
     
     // helpers
     
