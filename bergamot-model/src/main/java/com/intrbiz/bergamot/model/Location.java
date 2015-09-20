@@ -1,5 +1,6 @@
 package com.intrbiz.bergamot.model;
 
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -21,7 +22,7 @@ import com.intrbiz.data.db.compiler.meta.SQLVersion;
  */
 @SQLTable(schema = BergamotDB.class, name = "location", since = @SQLVersion({ 1, 0, 0 }))
 @SQLUnique(name = "name_unq", columns = { "site_id", "name" })
-public class Location extends NamedObject<LocationMO, LocationCfg> implements Commented
+public class Location extends SecuredObject<LocationMO, LocationCfg> implements Commented
 {
     private static final long serialVersionUID = 1L;
 
@@ -138,6 +139,14 @@ public class Location extends NamedObject<LocationMO, LocationCfg> implements Co
         }
     }
     
+    public GroupState getStateForContact(Contact contact)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.computeLocationStateForContact(this.getId(), contact.getId());
+        }
+    }
+    
     /**
      * Get comments against this downtime
      * @param limit the maximum number of comments to get
@@ -159,30 +168,20 @@ public class Location extends NamedObject<LocationMO, LocationCfg> implements Co
     {
         return this.getComments(5);
     }
-    
-    /**
-     * Get the security domains this location exists within
-     */
-    public List<SecurityDomain> getSecurityDomains()
-    {
-        try (BergamotDB db = BergamotDB.connect())
-        {
-            return db.getSecurityDomainsForCheck(this.getId());
-        }
-    }
 
     @Override
-    public LocationMO toMO(boolean stub)
+    public LocationMO toMO(Contact contact, EnumSet<MOFlag> options)
     {
         LocationMO mo = new LocationMO();
-        super.toMO(mo, stub);
-        mo.setState(this.getState().toMO());
-        if (!stub)
+        super.toMO(mo, contact, options);
+        mo.setState(this.getState().toMO(contact));
+        if (options.contains(MOFlag.LOCATION))
         {
-            mo.setLocation(Util.nullable(this.getLocation(), Location::toStubMO));
-            mo.setChildren(this.getChildren().stream().map(Location::toStubMO).collect(Collectors.toList()));
-            mo.setHosts(this.getHosts().stream().map(Host::toStubMO).collect(Collectors.toList()));
+            Location location = this.getLocation();
+            if (location != null && (contact == null || contact.hasPermission("read", location))) mo.setLocation(location.toStubMO(contact));
         }
+        if (options.contains(MOFlag.CHILDREN)) mo.setChildren(this.getChildren().stream().filter((x) -> contact == null || contact.hasPermission("read", contact)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
+        if (options.contains(MOFlag.HOSTS)) mo.setHosts(this.getHosts().stream().filter((x) -> contact == null || contact.hasPermission("read", contact)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
         return mo;
     }
 }

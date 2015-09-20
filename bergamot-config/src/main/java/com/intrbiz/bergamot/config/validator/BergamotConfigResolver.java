@@ -29,49 +29,108 @@ public class BergamotConfigResolver
         return inherited;
     }
     
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    public <T extends TemplatedObjectCfg<T>> T resolveInherit(T object)
+    public <T extends TemplatedObjectCfg<T>> T computeInheritenance(T object)
     {
-        if (((TemplatedObjectCfg) object).getInherits().size() > 0)
+        this.computeInheritenance(object, null);
+        return object;
+    }
+    
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public <T extends TemplatedObjectCfg<T>> T computeInheritenance(T object, BergamotValidationReport report)
+    {
+        logger.debug("Computing inheritenance for: " + object.getClass().getSimpleName() + " " + object.getName());
+        // resolve the object
+        this.resolveInherit(object, report);
+        // now resolve the children
+        for (TemplatedObjectCfg<?> child : object.getTemplatedChildObjects())
         {
-            logger.debug("Skipping previously resolved object: " + object.getClass().getSimpleName() + "::" + object.getName());
+            this.resolveChildInherit(object, (TemplatedObjectCfg) child, report);
         }
-        else
+        return object;
+    }
+    
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    protected void resolveInherit(TemplatedObjectCfg<?> object, BergamotValidationReport report)
+    {
+        if (object.getInherits().isEmpty())
         {
-            logger.debug("Resolving inheritance for " + object.getClass().getSimpleName() + "::" + object.getName());
+            logger.debug("Resolving inheritenance for: " + object.getClass().getSimpleName() + " " + object.getName());
             for (String inheritsFrom : object.getInheritedTemplates())
             {
-                logger.debug("Looking up inherited object: " + inheritsFrom);   
                 TemplatedObjectCfg<?> superObject = this.lookup(object.getClass(), inheritsFrom);
                 if (superObject != null)
                 {
                     // we need to recursively ensure that the inherited object is resolved
-                    this.resolveInherit((TemplatedObjectCfg) superObject);
+                    this.computeInheritenance((TemplatedObjectCfg) superObject, report);
                     // add the inherited object
                     ((TemplatedObjectCfg) object).addInheritedObject(superObject);
                 }
                 else
                 {
                     // error
-                    logger.error("Cannot find the inherited object " + inheritsFrom + "!");
-                    logger.warn("Error: Cannot find the inherited " + object.getClass().getSimpleName() + " named '" + inheritsFrom + "' which is inherited by " + object);
+                    if (report != null) report.logError("Error: Cannot find the inherited " + object.getClass().getSimpleName() + " named '" + inheritsFrom + "' which is inherited by " + object);
                 }
-            }
-            // child objects
-            for (TemplatedObjectCfg<?> child : object.getTemplatedChildObjects())
-            {
-                this.resolveInherit((TemplatedObjectCfg) child);
             }
             // special cases
             if (object instanceof TimePeriodCfg)
             {
-                resolveExcludes((TimePeriodCfg) object);
+                resolveExcludes((TimePeriodCfg) object, report);
             }
         }
-        return object;
     }
     
-    private TimePeriodCfg resolveExcludes(TimePeriodCfg object)
+    /**
+     * Search recursively up the template chain
+     * @param parent the parent object
+     * @param name the template we are looking for
+     * @return the template if found, or null
+     */
+    protected <C extends TemplatedObjectCfg<C>> TemplatedObjectCfg<?> lookupChildTemplate(C container, String name)
+    {
+        for (C containerTemplate : container.getInherits())
+        {
+            // search for the child object in the inherited template
+            for (TemplatedObjectCfg<?> child : containerTemplate.getTemplatedChildObjects())
+            {
+                if (name.equals(child.getName())) return child;
+            }
+            // recurse up the template chain
+            TemplatedObjectCfg<?> template = this.lookupChildTemplate(containerTemplate, name);
+            if (template != null) return template;
+        }
+        return null;
+    }
+    
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    protected <T extends TemplatedObjectCfg<T>, C extends TemplatedObjectCfg<C>> void resolveChildInherit(C container, T object, BergamotValidationReport report)
+    {
+        if (object.getInherits().isEmpty())
+        {
+            logger.debug("Resolving child inheritenance for: " + object.getClass().getSimpleName() + " " + object.getName() + " <<<< " + container.getClass().getSimpleName() + " " + container.getName());
+            // Firstly look for are we inheriting from a child object of the parent object's templates
+            for (String inheritsFrom : object.getInheritedTemplates())
+            {
+                // lookup in the containers inheritance tree
+                TemplatedObjectCfg<?> superObject = this.lookupChildTemplate(container, inheritsFrom);
+                // fallback to a global template
+                if (superObject == null) superObject = this.lookup(object.getClass(), inheritsFrom);
+                // yay or nay
+                if (superObject != null)
+                {
+                    // resolve the super object
+                    this.resolveInherit(superObject, report);
+                    // add the inherited object
+                    ((TemplatedObjectCfg) object).addInheritedObject(superObject);
+                }
+                else
+                {
+                    if (report != null) report.logError("Error: Cannot find the inherited " + object.getClass().getSimpleName() + " named '" + inheritsFrom + "' which is inherited by " + object);
+                }
+            }
+        }
+    }
+    
+    protected TimePeriodCfg resolveExcludes(TimePeriodCfg object, BergamotValidationReport report)
     {
         for (String exclude : object.getExcludes())
         {
@@ -79,7 +138,7 @@ public class BergamotConfigResolver
             if (excludedTimePeriod == null)
             {
                 // error
-                logger.warn("Error: Cannot find the excluded time period named '" + exclude + "' which is excluded by " + object);
+                if (report != null) report.logError("Cannot find the excluded time period named '" + exclude + "' which is excluded by " + object);
             }
         }
         return object;

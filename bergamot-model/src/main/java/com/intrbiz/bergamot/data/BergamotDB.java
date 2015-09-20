@@ -1,5 +1,7 @@
 package com.intrbiz.bergamot.data;
 
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.util.LinkedList;
 import java.util.List;
@@ -8,6 +10,8 @@ import java.util.UUID;
 
 import org.apache.log4j.Logger;
 
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.Timer;
 import com.intrbiz.Util;
 import com.intrbiz.bergamot.config.model.TemplatedObjectCfg;
 import com.intrbiz.bergamot.config.validator.BergamotConfigResolver;
@@ -21,6 +25,8 @@ import com.intrbiz.bergamot.model.CheckCommand;
 import com.intrbiz.bergamot.model.Cluster;
 import com.intrbiz.bergamot.model.Command;
 import com.intrbiz.bergamot.model.Comment;
+import com.intrbiz.bergamot.model.ComputedPermission;
+import com.intrbiz.bergamot.model.ComputedPermissionForDomain;
 import com.intrbiz.bergamot.model.Config;
 import com.intrbiz.bergamot.model.ConfigChange;
 import com.intrbiz.bergamot.model.Contact;
@@ -67,10 +73,11 @@ import com.intrbiz.data.db.compiler.meta.SQLSetter;
 import com.intrbiz.data.db.compiler.meta.SQLVersion;
 import com.intrbiz.data.db.compiler.meta.ScriptType;
 import com.intrbiz.data.db.compiler.util.SQLScript;
+import com.intrbiz.gerald.witchcraft.Witchcraft;
 
 @SQLSchema(
         name = "bergamot", 
-        version = @SQLVersion({3, 10, 0}),
+        version = @SQLVersion({3, 18, 0}),
         tables = {
             Site.class,
             Location.class,
@@ -101,7 +108,9 @@ import com.intrbiz.data.db.compiler.util.SQLScript;
             CheckSavedState.class,
             SecurityDomain.class,
             SecurityDomainMembership.class,
-            AccessControl.class
+            AccessControl.class,
+            ComputedPermission.class,
+            ComputedPermissionForDomain.class
         }
 )
 public abstract class BergamotDB extends DatabaseAdapter
@@ -886,6 +895,84 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract GroupState computeGroupState(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
     /**
+     * Compute the state of the given group, with respect to the access controls 
+     * of the given contact, this will recursively follow the group hierarchy 
+     * an compute the state of all the checks within the group
+     * @param groupId
+     * @param contactId
+     */
+    @SQLGetter(table = GroupState.class, name = "compute_group_state_for_contact", since = @SQLVersion({3, 11, 0}),
+        query = @SQLQuery(
+                "WITH RECURSIVE group_graph(id) AS (  \n" +
+                "    SELECT g.id  \n" +
+                "    FROM bergamot.group g \n" +
+                "    LEFT JOIN \n" +
+                "    ( \n" +
+                "      SELECT sdm1.check_id, coalesce(bool_or(cpfd1.allowed), false) as allowed \n" +
+                "      FROM bergamot.security_domain_membership sdm1 \n" +
+                "      JOIN bergamot.computed_permissions_for_domain cpfd1 ON (sdm1.security_domain_id = cpfd1.security_domain_id) \n" +
+                "      WHERE cpfd1.permission = 'read' AND cpfd1.contact_id = p_contact_id \n" +
+                "      GROUP BY sdm1.check_id \n" +
+                "    ) q1 ON (q1.check_id = g.id) \n" +
+                "    WHERE g.id = p_group_id AND (coalesce(q1.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+                "  UNION  \n" +
+                "    SELECT g.id  \n" +
+                "    FROM bergamot.group g\n" +
+                "    LEFT JOIN \n" +
+                "    ( \n" +
+                "      SELECT sdm2.check_id, coalesce(bool_or(cpfd2.allowed), false) as allowed \n" +
+                "      FROM bergamot.security_domain_membership sdm2 \n" +
+                "      JOIN bergamot.computed_permissions_for_domain cpfd2 ON (sdm2.security_domain_id = cpfd2.security_domain_id) \n" +
+                "      WHERE cpfd2.permission = 'read' AND cpfd2.contact_id = p_contact_id \n" +
+                "      GROUP BY sdm2.check_id \n" +
+                "    ) q2 ON (q2.check_id = g.id), \n" +
+                "    group_graph gg  \n" +
+                "    WHERE g.group_ids @> ARRAY[gg.id] AND (coalesce(q2.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+                ")  \n" +
+                "SELECT   \n" +
+                "  p_group_id,  \n" +
+                "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime), true) AS ok,  \n" +
+                "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER, 0) AS status,  \n" +
+                "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count,    \n" +
+                "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count,  \n" +
+                "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count,  \n" +
+                "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count,  \n" +
+                "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count,  \n" +
+                "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count,  \n" +
+                "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count,  \n" +
+                "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,   \n" +
+                "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count,  \n" +
+                "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count,  \n" +
+                "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,    \n" +
+                "  count(s.check_id)::INTEGER                                                                          AS total_checks  \n" +
+                "FROM\n" +
+                " bergamot.check_state s  \n" +
+                " JOIN (  \n" +
+                "    SELECT id, group_ids FROM bergamot.host  \n" +
+                "  UNION   \n" +
+                "    SELECT id, group_ids FROM bergamot.service    \n" +
+                "  UNION   \n" +
+                "    SELECT id, group_ids FROM bergamot.trap  \n" +
+                "  UNION  \n" +
+                "    SELECT id, group_ids FROM bergamot.cluster  \n" +
+                "  UNION  \n" +
+                "    SELECT id, group_ids FROM bergamot.resource  \n" +
+                " ) q ON (s.check_id = q.id)\n" +
+                "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])\n" +
+                "LEFT JOIN \n" +
+                "( \n" +
+                "  SELECT sdm3.check_id, coalesce(bool_or(cpfd3.allowed), false) as allowed \n" +
+                "  FROM bergamot.security_domain_membership sdm3 \n" +
+                "  JOIN bergamot.computed_permissions_for_domain cpfd3 ON (sdm3.security_domain_id = cpfd3.security_domain_id) \n" +
+                "  WHERE cpfd3.permission = 'read' AND cpfd3.contact_id = p_contact_id \n" +
+                "  GROUP BY sdm3.check_id \n" +
+                ") q3 ON (q3.check_id = s.check_id) \n" +
+                "WHERE coalesce(q3.allowed, false) OR bergamot.has_permission(p_contact_id, 'read')\n"
+        )
+    )
+    public abstract GroupState computeGroupStateForContact(@SQLParam(value = "group_id", virtual = true) UUID groupId, @SQLParam(value = "contact_id", virtual = true) UUID contactId);
+    
+    /**
      * Compute the state of the given group, this will recursively follow 
      * the group hierarchy an compute the state of all the checks within the 
      * group
@@ -923,6 +1010,73 @@ public abstract class BergamotDB extends DatabaseAdapter
                               "JOIN location_graph lg ON (h.location_id = lg.id)")
     )
     public abstract GroupState computeLocationState(@SQLParam(value = "location_id", virtual = true) UUID locationId);
+    
+    /**
+     * Compute the state of the given location taking into account the permissions 
+     * granted to the given contact, this will recursively follow the location 
+     * hierarchy an compute the state of all the checks within the location
+     * @param groupId
+     * @return
+     */
+    @SQLGetter(table = GroupState.class, name = "compute_location_state_for_contact", since = @SQLVersion({3, 13, 0}),
+        query = @SQLQuery(
+            "WITH RECURSIVE location_graph(id) AS (\n" +
+            "    SELECT l1.id\n" +
+            "    FROM bergamot.location l1\n" +
+            "    LEFT JOIN \n" +
+            "    ( \n" +
+            "      SELECT sdm1.check_id, coalesce(bool_or(cpfd1.allowed), false) as allowed \n" +
+            "      FROM bergamot.security_domain_membership sdm1 \n" +
+            "      JOIN bergamot.computed_permissions_for_domain cpfd1 ON (sdm1.security_domain_id = cpfd1.security_domain_id) \n" +
+            "      WHERE cpfd1.permission = 'read' AND cpfd1.contact_id = p_contact_id \n" +
+            "      GROUP BY sdm1.check_id \n" +
+            "    ) q1 ON (q1.check_id = l1.id) \n" +
+            "    WHERE l1.id = p_location_id AND (coalesce(q1.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+            "  UNION\n" +
+            "    SELECT l2.id\n" +
+            "    FROM bergamot.location l2\n" +
+            "    LEFT JOIN \n" +
+            "    ( \n" +
+            "      SELECT sdm2.check_id, coalesce(bool_or(cpfd2.allowed), false) as allowed \n" +
+            "      FROM bergamot.security_domain_membership sdm2 \n" +
+            "      JOIN bergamot.computed_permissions_for_domain cpfd2 ON (sdm2.security_domain_id = cpfd2.security_domain_id) \n" +
+            "      WHERE cpfd2.permission = 'read' AND cpfd2.contact_id = p_contact_id \n" +
+            "      GROUP BY sdm2.check_id \n" +
+            "    ) q2 ON (q2.check_id = l2.id), \n" +
+            "    location_graph lg\n" +
+            "    WHERE l2.location_id = lg.id AND (coalesce(q2.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+            ") \n" +
+            "SELECT\n" +
+            "  p_location_id,\n" +
+            "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime), true) AS ok, \n" +
+            "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER, 0) AS status, \n" +
+            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count,   \n" +
+            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, \n" +
+            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, \n" +
+            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, \n" +
+            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, \n" +
+            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, \n" +
+            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, \n" +
+            "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,  \n" +
+            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, \n" +
+            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, \n" +
+            "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,   \n" +
+            "  count(s.check_id)::INTEGER                                                                          AS total_checks   \n" +
+            "FROM bergamot.check_state s \n" +
+            "JOIN bergamot.host h ON (s.check_id = h.id)\n" +
+            "JOIN location_graph lg ON (h.location_id = lg.id)\n" +
+            "LEFT JOIN \n" +
+            "( \n" +
+            "  SELECT sdm3.check_id, coalesce(bool_or(cpfd3.allowed), false) as allowed \n" +
+            "  FROM bergamot.security_domain_membership sdm3 \n" +
+            "  JOIN bergamot.computed_permissions_for_domain cpfd3 ON (sdm3.security_domain_id = cpfd3.security_domain_id) \n" +
+            "  WHERE cpfd3.permission = 'read' AND cpfd3.contact_id = p_contact_id \n" +
+            "  GROUP BY sdm3.check_id \n" +
+            ") q3 ON (q3.check_id = s.check_id) \n" +
+            "WHERE coalesce(q3.allowed, false) OR bergamot.has_permission(p_contact_id, 'read')\n"
+        )
+    )
+    public abstract GroupState computeLocationStateForContact(@SQLParam(value = "location_id", virtual = true) UUID locationId, @SQLParam(value = "contact_id", virtual = true) UUID contactId);
     
     // check command
     
@@ -1664,6 +1818,10 @@ public abstract class BergamotDB extends DatabaseAdapter
     public abstract SecurityDomain getSecurityDomainByName(@SQLParam("site_id") UUID siteId, @SQLParam("name") String name);
     
     @Cacheable
+    @SQLGetter(table = SecurityDomain.class, name = "list_security_domains", since = @SQLVersion({3, 17, 0}))
+    public abstract List<SecurityDomain> listSecurityDomains(@SQLParam("site_id") UUID siteId);
+    
+    @Cacheable
     @CacheInvalidate({
         "get_security_domain_by_name.#{this.getSiteId(id)}.*",
     })
@@ -1701,7 +1859,7 @@ public abstract class BergamotDB extends DatabaseAdapter
     
     
     @Cacheable
-    @SQLGetter(table = SecurityDomain.class, name = "get_security_domains_for_check", since = @SQLVersion({3, 8, 0}),
+    @SQLGetter(table = SecurityDomain.class, name = "get_security_domains_for_object", since = @SQLVersion({3, 8, 0}),
         query = @SQLQuery(
                 "SELECT sd.* "
                 + "FROM bergamot.security_domain sd "
@@ -1709,7 +1867,7 @@ public abstract class BergamotDB extends DatabaseAdapter
                 + "WHERE sdm.check_id = p_check_id"
         )
     )
-    public abstract List<SecurityDomain> getSecurityDomainsForCheck(@SQLParam(value = "check_id", virtual = true) UUID checkId);
+    public abstract List<SecurityDomain> getSecurityDomainsForObject(@SQLParam(value = "check_id", virtual = true) UUID checkId);
     
     public List<Check<?,?>> getChecksInSecurityDomain(UUID securityDomainId)
     {
@@ -1748,6 +1906,141 @@ public abstract class BergamotDB extends DatabaseAdapter
     @SQLRemove(table = AccessControl.class, name = "remove_access_control", since = @SQLVersion({3, 8, 0}))
     public abstract void removeAccessControl(@SQLParam("security_domain_id") UUID securityDomainId, @SQLParam("role_id") UUID roleId);
     
+    // compute permissions from ACL information
+    
+    private Timer build_permissions = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.build_permissions(UUID)"));
+    
+    /**
+     * Compute the permissions model for the given site
+     * @param siteId
+     * @return the number of permissions computed
+     */
+    public int buildPermissions(UUID siteId)
+    {
+        // compute a flattened view of the permissions
+        int changed = this.useTimed(
+            build_permissions,
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.build_permissions(?::UUID)"))
+                {
+                  stmt.setObject(1, siteId);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next()) return rs.getInt(1);
+                  }
+                }
+                return null;
+            }
+        );
+        // cache management
+        this.invalidatePermissionsCache(siteId);
+        // return the number of permissions which were computed
+        return changed;
+    }
+    
+    public void invalidatePermissionsCache(UUID siteId)
+    {
+        this.getAdapterCache().removePrefix("has_permission." + siteId);
+        this.getAdapterCache().removePrefix("has_permission_for_object." + siteId);
+        this.getAdapterCache().removePrefix("has_permission_for_domain." + siteId);
+    }
+    
+    private Timer has_permission = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.has_permission(UUID,TEXT)"));
+    private Meter cache_miss_has_permission = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().meter(Witchcraft.name(BergamotDB.class, "cache_miss.bergamot.has_permission(UUID,TEXT)"));
+    
+    /**
+     * Does the given contact have the given permission
+     * @param contactId the contact
+     * @param permission the permission
+     * @return true if the contact has permission
+     */
+    public boolean hasPermission(UUID contactId, String permission)
+    {
+        return this.useTimedCached(
+            has_permission, 
+            cache_miss_has_permission, 
+            "has_permission." + this.getSiteId(contactId) + "." + contactId + "." + permission, 
+            null, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.has_permission(?::UUID, ?::TEXT)"))
+                {
+                  stmt.setObject(1, contactId);
+                  stmt.setString(2, permission);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next()) return rs.getBoolean(1);
+                  }
+                }
+                return false;
+            }
+        );
+    }
+    
+    private Timer has_permission_for_domain = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.has_permission_for_domain(UUID,UUID,TEXT)"));
+    private Meter cache_miss_has_permission_for_domain = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().meter(Witchcraft.name(BergamotDB.class, "cache_miss.bergamot.has_permission_for_domain(UUID,UUID,TEXT)"));
+    
+    /**
+     * Does the given contact have the given permission for the given security domain
+     * @param contactId the contact
+     * @param securityDomainId the security domain
+     * @param permission the permission
+     * @return true if the contact has permission
+     */
+    public boolean hasPermissionForSecurityDomain(UUID contactId, UUID securityDomainId, String permission)
+    {
+        return this.useTimedCached(
+            has_permission_for_domain, 
+            cache_miss_has_permission_for_domain, 
+            "has_permission_for_domain." + this.getSiteId(contactId) + "." + contactId + "." + securityDomainId + "." + permission,
+            null, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.has_permission_for_domain(?::UUID, ?::UUID, ?::TEXT)"))
+                {
+                  stmt.setObject(1, contactId);
+                  stmt.setObject(2, securityDomainId);
+                  stmt.setString(3, permission);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next()) return rs.getBoolean(1);
+                  }
+                }
+                return false;
+            }
+        );
+    }
+    
+    private Timer has_permission_for_object = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.has_permission_for_object(UUID,UUID,TEXT)"));
+    private Meter cache_miss_has_permission_for_object = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().meter(Witchcraft.name(BergamotDB.class, "cache_miss.bergamot.has_permission_for_object(UUID,UUID,TEXT)"));
+    
+    /**
+     * Does the given contact have the given permission for the given object
+     * @param contactId the contact
+     * @param objectId the object
+     * @param permission the permission
+     * @return true if the contact has permission
+     */
+    public boolean hasPermissionForObject(UUID contactId, UUID objectId, String permission)
+    {
+        return this.useTimedCached(
+            has_permission_for_object, 
+            cache_miss_has_permission_for_object, 
+            "has_permission_for_object." + this.getSiteId(contactId) + "." + contactId + "." + objectId + "." + permission, 
+            null, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.has_permission_for_object(?::UUID, ?::UUID, ?::TEXT)"))
+                {
+                  stmt.setObject(1, contactId);
+                  stmt.setObject(2, objectId);
+                  stmt.setString(3, permission);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next()) return rs.getBoolean(1);
+                  }
+                }
+                return false;
+            }
+        );
+    }
     
     // helpers
     
@@ -1929,6 +2222,297 @@ public abstract class BergamotDB extends DatabaseAdapter
         return new SQLScript(
                 "UPDATE bergamot.check_state SET suppressed = FALSE",
                 "UPDATE bergamot.check_transition SET previous_suppressed = FALSE, next_suppressed = FALSE"
+        );
+    }
+    
+    // V2 ACLs
+    
+    @SQLPatch(name = "add_acl_processing", index = 10, type = ScriptType.BOTH, version = @SQLVersion({3, 11, 0}), skip = false)
+    public static SQLScript addACLProcessing()
+    {
+        return new SQLScript(
+                "CREATE OR REPLACE FUNCTION bergamot.match_permission(p_grants TEXT[], p_permission TEXT) \n" +
+                "RETURNS BOOLEAN \n" +
+                "LANGUAGE SQL \n" +
+                "AS $$ \n" +
+                " SELECT bool_or(q.v) \n" +
+                " FROM \n" +
+                " ( \n" +
+                "   SELECT \n" + 
+                "     CASE \n" +
+                "      WHEN g.v ~ '\\*$' THEN \n" +
+                "       substring(g.v, 1, length(g.v) - 1) = substring($2, 1, length(g.v) - 1) \n" +
+                "      ELSE \n" +
+                "       g.v = $2 \n" +
+                "     END \n" +
+                "   FROM unnest($1) g(v) \n" +
+                "  UNION \n" +
+                "   SELECT FALSE \n" +
+                " ) q(v) \n" +
+                "$$",
+                
+                "CREATE OR REPLACE FUNCTION bergamot.check_permission(p_contact_id UUID, p_permission TEXT)\n" +
+                "RETURNS BOOLEAN\n" +
+                "LANGUAGE SQL\n" +
+                "AS $$\n" +
+                " SELECT (bool_or(granted_generic) AND NOT bool_or(revoked_generic)) AS allowed\n" +
+                " FROM\n" +
+                " (\n" +
+                "  WITH RECURSIVE team_graph(id, team_ids, granted_permissions, revoked_permissions, depth, chain) AS (\n" +
+                "    SELECT t1.id, t1.team_ids, t1.granted_permissions, t1.revoked_permissions, 1, ARRAY[t1.id]\n" +
+                "    FROM bergamot.team t1\n" +
+                "   UNION\n" +
+                "    SELECT t2.id, t2.team_ids, t2.granted_permissions, t2.revoked_permissions, tg.depth + 1, tg.chain || t2.id\n" +
+                "    FROM bergamot.team t2, team_graph tg\n" +
+                "    WHERE tg.team_ids @> ARRAY[t2.id]\n" +
+                "  )\n" +
+                "  SELECT \n" +
+                "   c.id, \n" +
+                "   0 AS depth, \n" +
+                "   ARRAY[c.id] AS chain, \n" +
+                "   bergamot.match_permission(c.granted_permissions,  $2) AS granted_generic, \n" +
+                "   bergamot.match_permission(c.revoked_permissions,  $2) AS revoked_generic \n" +
+                "  FROM bergamot.contact c\n" +
+                "  WHERE c.id = $1\n" +
+                " UNION ALL\n" +
+                "  SELECT \n" +
+                "   tg.id, \n" +
+                "   tg.depth, \n" +
+                "   tg.chain, \n" +
+                "   bergamot.match_permission(tg.granted_permissions, $2) AS granted_generic, \n" +
+                "   bergamot.match_permission(tg.revoked_permissions, $2) AS revoked_generic\n" +
+                "  FROM bergamot.contact c\n" +
+                "  JOIN team_graph tg ON (c.team_ids && tg.chain)\n" +
+                "  WHERE c.id = $1\n" +
+                " ) q\n" +
+                "$$",
+                
+                "CREATE OR REPLACE FUNCTION bergamot.check_permission_for_domain(p_contact_id UUID, p_security_domain_id UUID, p_permission TEXT)\n" +
+                "RETURNS BOOLEAN\n" +
+                "LANGUAGE SQL\n" +
+                "AS $$\n" +
+                " SELECT ((bool_or(granted_generic) AND NOT bool_or(revoked_generic)) OR (bool_or(granted_domain) AND NOT bool_or(revoked_domain))) AS allowed\n" +
+                " FROM\n" +
+                " (\n" +
+                "  WITH RECURSIVE team_graph(id, team_ids, granted_permissions, revoked_permissions, depth, chain) AS (\n" +
+                "    SELECT t1.id, t1.team_ids, t1.granted_permissions, t1.revoked_permissions, 1, ARRAY[t1.id]\n" +
+                "    FROM bergamot.team t1\n" +
+                "   UNION\n" +
+                "    SELECT t2.id, t2.team_ids, t2.granted_permissions, t2.revoked_permissions, tg.depth + 1, tg.chain || t2.id\n" +
+                "    FROM bergamot.team t2, team_graph tg\n" +
+                "    WHERE tg.team_ids @> ARRAY[t2.id]\n" +
+                "  )\n" +
+                "  SELECT \n" +
+                "   c.id, \n" +
+                "   0 AS depth, \n" +
+                "   ARRAY[c.id] AS chain, \n" +
+                "   bergamot.match_permission(c.granted_permissions,  $3) AS granted_generic, \n" +
+                "   bergamot.match_permission(c.revoked_permissions,  $3) AS revoked_generic, \n" +
+                "   bergamot.match_permission(ac.granted_permissions, $3) AS granted_domain, \n" +
+                "   bergamot.match_permission(ac.revoked_permissions, $3) AS revoked_domain\n" +
+                "  FROM bergamot.contact c\n" +
+                "  LEFT JOIN bergamot.access_control ac ON (c.id = ac.role_id AND ac.security_domain_id = $2)\n" +
+                "  WHERE c.id = $1\n" +
+                " UNION ALL\n" +
+                "  SELECT \n" +
+                "   tg.id, \n" +
+                "   tg.depth, \n" +
+                "   tg.chain, \n" +
+                "   bergamot.match_permission(tg.granted_permissions, $3) AS granted_generic, \n" +
+                "   bergamot.match_permission(tg.revoked_permissions, $3) AS revoked_generic, \n" +
+                "   bergamot.match_permission(ac.granted_permissions, $3) AS granted_domain, \n" +
+                "   bergamot.match_permission(ac.revoked_permissions, $3) AS revoked_domain\n" +
+                "  FROM bergamot.contact c\n" +
+                "  JOIN team_graph tg ON (c.team_ids && tg.chain)\n" +
+                "  LEFT JOIN bergamot.access_control ac ON (tg.id = ac.role_id AND ac.security_domain_id = $2)\n" +
+                "  WHERE c.id = $1\n" +
+                " ) q\n" +
+                "$$",
+                
+                "CREATE OR REPLACE FUNCTION bergamot.list_permissions()\n" +
+                "RETURNS SETOF TEXT\n" +
+                "LANGUAGE SQL AS $$\n" +
+                "  SELECT unnest(\n" +
+                "      ARRAY[\n" +
+                "        'ui.access',\n" +
+                "        'ui.view.stats',\n" +
+                "        'ui.view.stats.transitions',\n" +
+                "        'ui.view.readings',\n" +
+                "        'ui.sign.agent',\n" +
+                "        'ui.generate.agent',\n" +
+                "        'ui.admin',\n" +
+                "        'api.access',\n" +
+                "        'api.sign.agent',\n" +
+                "        'read',\n" +
+                "        'read.config',\n" +
+                "        'read.comment',\n" +
+                "        'read.downtime',\n" +
+                "        'read.readings',\n" +
+                "        'enable',\n" +
+                "        'disable',\n" +
+                "        'execute',\n" +
+                "        'suppress',\n" +
+                "        'unsuppress',\n" +
+                "        'submit',\n" +
+                "        'acknowledge',\n" +
+                "        'write',\n" +
+                "        'write.comment',\n" +
+                "        'write.downtime',\n" +
+                "        'create',\n" +
+                "        'remove',\n" +
+                "        'remove.comment',\n" +
+                "        'remove.downtime',\n" +
+                "        'sign.agent',\n" +
+                "        'config.export',\n" +
+                "        'config.change.apply'\n" +
+                "      ])::TEXT;\n" +
+                "$$",
+
+                "CREATE OR REPLACE FUNCTION bergamot.compute_permissions(p_contact_id UUID)\n" +
+                "RETURNS INTEGER \n" +
+                "LANGUAGE plpgsql VOLATILE\n" +
+                "AS $$\n" +
+                "DECLARE\n" +
+                "  v_count INTEGER;\n" +
+                "BEGIN\n" +
+                "    -- remove first\n" +
+                "    DELETE FROM bergamot.computed_permissions WHERE contact_id = p_contact_id;\n" +
+                "    -- now load\n" +
+                "    INSERT INTO bergamot.computed_permissions \n" +
+                "    (\n" +
+                "      SELECT p_contact_id, p.permission, bergamot.check_permission(p_contact_id, p.permission) AS allowed\n" +
+                "      FROM bergamot.list_permissions() p(permission)\n" +
+                "    );\n" +
+                "    GET DIAGNOSTICS v_count = ROW_COUNT;\n" +
+                "    RETURN v_count;\n" +
+                "END;\n" +
+                "$$",
+
+                "CREATE OR REPLACE FUNCTION bergamot.compute_permissions_for_domain(p_contact_id UUID, p_security_domain_id UUID)\n" +
+                "RETURNS INTEGER \n" +
+                "LANGUAGE plpgsql VOLATILE\n" +
+                "AS $$\n" +
+                "DECLARE\n" +
+                "  v_count INTEGER;\n" +
+                "BEGIN\n" +
+                "    -- remove first\n" +
+                "    DELETE FROM bergamot.computed_permissions_for_domain WHERE contact_id = p_contact_id AND security_domain_id = p_security_domain_id;\n" +
+                "    -- now load\n" +
+                "    INSERT INTO bergamot.computed_permissions_for_domain \n" +
+                "    (\n" +
+                "      SELECT p_contact_id, p_security_domain_id, p.permission, bergamot.check_permission_for_domain(p_contact_id, p_security_domain_id, p.permission) AS allowed\n" +
+                "      FROM bergamot.list_permissions() p(permission)\n" +
+                "    );\n" +
+                "    GET DIAGNOSTICS v_count = ROW_COUNT;\n" +
+                "    RETURN v_count;\n" +
+                "END;\n" +
+                "$$",
+
+                "CREATE OR REPLACE FUNCTION bergamot.build_permissions(p_site_id UUID)\n" +
+                "RETURNS INTEGER \n" +
+                "LANGUAGE PLPGSQL VOLATILE AS\n" +
+                "$$\n" +
+                "BEGIN\n" +
+                "    -- compute the permissions\n" +
+                "    RETURN sum(q.cp)\n" +
+                "    FROM\n" +
+                "    (\n" +
+                "        SELECT bergamot.compute_permissions(c.id) AS cp \n" +
+                "        FROM bergamot.contact c \n" + 
+                "        WHERE c.site_id = p_site_id\n" +
+                "      UNION ALL\n" +
+                "        SELECT bergamot.compute_permissions_for_domain(c.id, sd.id) AS cp \n" +
+                "        FROM bergamot.contact c " +
+                "        CROSS JOIN bergamot.security_domain sd \n" +
+                "        WHERE c.site_id = p_site_id\n" +
+                "    ) q;\n" +
+                "END;\n" +
+                "$$",
+                
+                "CREATE OR REPLACE FUNCTION bergamot.has_permission(p_contact_id UUID, p_permission TEXT)\n" +
+                "RETURNS BOOLEAN \n" +
+                "LANGUAGE SQL STABLE AS\n" +
+                "$$\n" +
+                "    SELECT allowed \n" +
+                "    FROM bergamot.computed_permissions \n" +
+                "    WHERE contact_id = $1 AND permission = $2\n" +
+                "$$",
+
+                "CREATE OR REPLACE FUNCTION bergamot.has_permission_for_domain(p_contact_id UUID, p_security_domain_id UUID, p_permission TEXT)\n" +
+                "RETURNS BOOLEAN \n" +
+                "LANGUAGE SQL STABLE AS\n" +
+                "$$\n" +
+                "    SELECT cpfd.allowed \n" +
+                "    FROM bergamot.computed_permissions_for_domain cpfd\n" +
+                "    WHERE cpfd.contact_id = $1 AND cpfd.security_domain_id = $2 AND permission = $3\n" +
+                "$$",
+
+                "CREATE OR REPLACE FUNCTION bergamot.has_permission_for_object(p_contact_id UUID, p_object_id UUID, p_permission TEXT)\n" +
+                "RETURNS BOOLEAN \n" +
+                "LANGUAGE SQL STABLE AS\n" +
+                "$$\n" +
+                "  SELECT coalesce(bool_or(q.allowed), false) AS allowed\n" +
+                "  FROM\n" +
+                "  (\n" +
+                "      SELECT cpfd.allowed\n" + 
+                "      FROM bergamot.computed_permissions_for_domain cpfd\n" + 
+                "      JOIN bergamot.security_domain_membership sdm ON (cpfd.security_domain_id = sdm.security_domain_id)\n" +
+                "      WHERE cpfd.contact_id = $1 AND sdm.check_id = $2 AND cpfd.permission = $3\n" +
+                "    UNION ALL\n" +
+                "      SELECT allowed\n" + 
+                "      FROM bergamot.computed_permissions\n" + 
+                "      WHERE contact_id = $1 AND permission = $3\n" +
+                "  ) q\n" +
+                "$$"
+        );
+    }
+    
+    @SQLPatch(name = "add_ui_create_permission", index = 11, type = ScriptType.BOTH, version = @SQLVersion({3, 18, 0}), skip = false)
+    public static SQLScript addUiCreatePermission()
+    {
+        return new SQLScript(
+                
+                "CREATE OR REPLACE FUNCTION bergamot.list_permissions()\n" +
+                "RETURNS SETOF TEXT\n" +
+                "LANGUAGE SQL AS $$\n" +
+                "  SELECT unnest(\n" +
+                "      ARRAY[\n" +
+                "        'ui.access',\n" +
+                "        'ui.view.stats',\n" +
+                "        'ui.view.stats.transitions',\n" +
+                "        'ui.view.readings',\n" +
+                "        'ui.sign.agent',\n" +
+                "        'ui.generate.agent',\n" +
+                "        'ui.admin',\n" +
+                "        'ui.create',\n" +
+                "        'api.access',\n" +
+                "        'api.sign.agent',\n" +
+                "        'read',\n" +
+                "        'read.config',\n" +
+                "        'read.comment',\n" +
+                "        'read.downtime',\n" +
+                "        'read.readings',\n" +
+                "        'enable',\n" +
+                "        'disable',\n" +
+                "        'execute',\n" +
+                "        'suppress',\n" +
+                "        'unsuppress',\n" +
+                "        'submit',\n" +
+                "        'acknowledge',\n" +
+                "        'write',\n" +
+                "        'write.comment',\n" +
+                "        'write.downtime',\n" +
+                "        'create',\n" +
+                "        'remove',\n" +
+                "        'remove.comment',\n" +
+                "        'remove.downtime',\n" +
+                "        'sign.agent',\n" +
+                "        'config.export',\n" +
+                "        'config.change.apply'\n" +
+                "      ])::TEXT;\n" +
+                "$$",
+                
+                "SELECT bergamot.build_permissions(id) FROM bergamot.site"
         );
     }
     

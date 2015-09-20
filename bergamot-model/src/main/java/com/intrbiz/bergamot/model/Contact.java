@@ -3,9 +3,14 @@ package com.intrbiz.bergamot.model;
 import java.io.Serializable;
 import java.security.Principal;
 import java.sql.Timestamp;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.mindrot.jbcrypt.BCrypt;
@@ -21,7 +26,7 @@ import com.intrbiz.data.db.compiler.meta.SQLVersion;
 
 @SQLTable(schema = BergamotDB.class, name = "contact", since = @SQLVersion({ 1, 0, 0 }))
 @SQLUnique(name = "name_unq", columns = { "site_id", "name" })
-public class Contact extends NamedObject<ContactMO, ContactCfg> implements Principal, Serializable
+public class Contact extends SecuredObject<ContactMO, ContactCfg> implements Principal, Serializable
 {
     private static final long serialVersionUID = 1L;
 
@@ -325,6 +330,130 @@ public class Contact extends NamedObject<ContactMO, ContactCfg> implements Princ
             return db.getAccessControlsForRole(this.getId());
         }
     }
+    
+    public AccessControl getAccessControl(SecurityDomain domain)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.getAccessControl(domain.getId(), this.getId());
+        }
+    }
+    
+    // permissions handling
+    
+    public boolean hasPermission(Permission permission)
+    {
+        return this.hasPermission(permission.toString());
+    }
+    
+    public boolean hasPermission(String permission)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.hasPermission(this.getId(), permission);
+        }
+    }
+    
+    public boolean hasPermission(Permission permission, SecurityDomain domain)
+    {
+        return this.hasPermission(permission.toString(), domain);
+    }
+    
+    public boolean hasPermission(String permission, SecurityDomain domain)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.hasPermissionForSecurityDomain(this.getId(), domain.getId(), permission);
+        }
+    }
+    
+    public boolean hasPermission(Permission permission, SecuredObject<?,?> overObject)
+    {
+        return this.hasPermission(permission.toString(), overObject);
+    }
+    
+    public boolean hasPermission(Permission permission, UUID overObjectId)
+    {
+        return this.hasPermission(permission.toString(), overObjectId);
+    }
+    
+    public boolean hasPermission(String permission, SecuredObject<?,?> overObject)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.hasPermissionForObject(this.getId(), overObject.getId(), permission);
+        }
+    }
+    
+    public boolean hasPermission(String permission, UUID overObjectId)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return db.hasPermissionForObject(this.getId(), overObjectId, permission);
+        }
+    }
+    
+    public <T extends SecuredObject<?,?>> List<T> hasPermission(Permission permission, Collection<T> overObjects)
+    {
+        List<T> filtered = new LinkedList<T>();
+        for (T overObject : overObjects)
+        {
+            if (this.hasPermission(permission, overObject))
+            {
+                filtered.add(overObject);
+            }
+        }
+        return filtered;
+    }
+    
+    public <T extends SecuredObject<?,?>> Set<T> hasPermission(Permission permission, Set<T> overObjects)
+    {
+        Set<T> filtered = new HashSet<T>();
+        for (T overObject : overObjects)
+        {
+            if (this.hasPermission(permission, overObject))
+            {
+                filtered.add(overObject);
+            }
+        }
+        return filtered;
+    }
+    
+    public <T extends SecuredObject<?,?>> List<T> hasPermission(String permission, Collection<T> overObjects)
+    {
+        return this.hasPermission(Permission.of(permission), overObjects);
+    }
+    
+    public <T extends SecuredObject<?,?>> Set<T> hasPermission(String permission, Set<T> overObjects)
+    {
+        return this.hasPermission(Permission.of(permission), overObjects);
+    }
+    
+    public <T extends SecuredObject<?,?>> List<T> hasPermission(Function<T,Permission> permission, Collection<T> overObjects)
+    {
+        List<T> filtered = new LinkedList<T>();
+        for (T overObject : overObjects)
+        {
+            if (this.hasPermission(permission.apply(overObject), overObject))
+            {
+                filtered.add(overObject);
+            }
+        }
+        return filtered;
+    }
+    
+    public <T extends SecuredObject<?,?>> Set<T> hasPermission(Function<T, Permission> permission, Set<T> overObjects)
+    {
+        Set<T> filtered = new HashSet<T>();
+        for (T overObject : overObjects)
+        {
+            if (this.hasPermission(permission.apply(overObject), overObject))
+            {
+                filtered.add(overObject);
+            }
+        }
+        return filtered;
+    }
 
     public String toString()
     {
@@ -332,21 +461,18 @@ public class Contact extends NamedObject<ContactMO, ContactCfg> implements Princ
     }
 
     @Override
-    public ContactMO toMO(boolean stub)
+    public ContactMO toMO(Contact contact, EnumSet<MOFlag> options)
     {
         ContactMO mo = new ContactMO();
-        super.toMO(mo, stub);
+        super.toMO(mo, contact, options);
         mo.setEmail(this.getEmail());
         mo.setMobile(this.getMobile());
         mo.setPager(this.getPager());
         mo.setPhone(this.getPhone());
         mo.setGrantedPermissions(this.getGrantedPermissions());
         mo.setRevokedPermissions(this.getRevokedPermissions());
-        if (!stub)
-        {
-            mo.setTeams(this.getTeams().stream().map(Team::toStubMO).collect(Collectors.toList()));
-            mo.setNotifications(Util.nullable(this.getNotifications(), Notifications::toStubMO));
-        }
+        if (options.contains(MOFlag.TEAMS)) mo.setTeams(this.getTeams().stream().filter((x) -> contact == null || contact.hasPermission("read", x)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
+        if (options.contains(MOFlag.NOTIFICATIONS)) mo.setNotifications(Util.nullable(this.getNotifications(), (x) -> x.toStubMO(contact)));
         return mo;
     }
 }

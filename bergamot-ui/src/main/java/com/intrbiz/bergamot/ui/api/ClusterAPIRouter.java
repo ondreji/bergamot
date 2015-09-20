@@ -4,12 +4,11 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import com.intrbiz.Util;
 import com.intrbiz.balsa.engine.route.Router;
-import com.intrbiz.balsa.error.http.BalsaNotFound;
 import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.config.model.ClusterCfg;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.metadata.IgnoreBinding;
 import com.intrbiz.bergamot.metadata.IsaObjectId;
 import com.intrbiz.bergamot.model.Cluster;
 import com.intrbiz.bergamot.model.Resource;
@@ -21,8 +20,8 @@ import com.intrbiz.bergamot.model.message.state.CheckStateMO;
 import com.intrbiz.bergamot.ui.BergamotApp;
 import com.intrbiz.metadata.Get;
 import com.intrbiz.metadata.JSON;
+import com.intrbiz.metadata.ListOf;
 import com.intrbiz.metadata.Prefix;
-import com.intrbiz.metadata.RequirePermission;
 import com.intrbiz.metadata.RequireValidPrincipal;
 import com.intrbiz.metadata.Var;
 import com.intrbiz.metadata.XML;
@@ -34,161 +33,175 @@ public class ClusterAPIRouter extends Router<BergamotApp>
 {
     @Get("/")
     @JSON
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
+    @ListOf(ClusterMO.class)
     public List<ClusterMO> getClusters(BergamotDB db, @Var("site") Site site)
     {
-        return db.listClusters(site.getId()).stream().map(Cluster::toStubMO).collect(Collectors.toList());
+        return db.listClusters(site.getId()).stream().filter((c) -> permission("read", c)).map((x) -> x.toStubMO(currentPrincipal())).collect(Collectors.toList());
     }
     
     @Get("/name/:name")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
-    public ClusterMO getCluster(BergamotDB db, @Var("site") Site site, String name)
+    public ClusterMO getClusterByName(BergamotDB db, @Var("site") Site site, String name)
     {
-        return Util.nullable(db.getClusterByName(site.getId(), name), Cluster::toMO);
+        Cluster cluster = notNull(db.getClusterByName(site.getId(), name));
+        require(permission("read", cluster));
+        return cluster.toMO(currentPrincipal());
     }
     
     @Get("/name/:name/state")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
-    public CheckStateMO getClusterState(BergamotDB db, @Var("site") Site site, String name)
+    public CheckStateMO getClusterStateByName(BergamotDB db, @Var("site") Site site, String name)
     {
-        return Util.nullable(db.getClusterByName(site.getId(), name), (h)->{return h.getState().toMO();});
+        Cluster cluster = notNull(db.getClusterByName(site.getId(), name));
+        require(permission("read", cluster));
+        return cluster.getState().toMO(currentPrincipal());
     }
     
     @Get("/id/:id")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
     public ClusterMO getCluster(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getCluster(id), Cluster::toMO);
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
+        return cluster.toMO(currentPrincipal());
     }
     
     @Get("/id/:id/state")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
     public CheckStateMO getClusterState(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getCluster(id), (h)->{return h.getState().toMO();});
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
+        return cluster.getState().toMO(currentPrincipal());
     }
     
     @Get("/name/:name/resources")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
-    @RequirePermission("api.read.resource")
     @WithDataAdapter(BergamotDB.class)
-    public List<ResourceMO> getClusterResources(BergamotDB db, @Var("site") Site site, String name)
+    @ListOf(ResourceMO.class)
+    public List<ResourceMO> getClusterResourcesByName(BergamotDB db, @Var("site") Site site, String name)
     {
-        return Util.nullable(db.getClusterByName(site.getId(), name), (e)->{return e.getResources().stream().map(Resource::toMO).collect(Collectors.toList());});
+        Cluster cluster = notNull(db.getClusterByName(site.getId(), name));
+        require(permission("read", cluster));
+        return cluster.getResources().stream().filter((r) -> permission("read", r)).map((x) -> x.toMO(currentPrincipal())).collect(Collectors.toList());
     }
     
     @Get("/id/:id/resources")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
-    @RequirePermission("api.read.resource")
     @WithDataAdapter(BergamotDB.class)
+    @ListOf(ResourceMO.class)
     public List<ResourceMO> getClusterResources(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getCluster(id), (e)->{return e.getResources().stream().map(Resource::toMO).collect(Collectors.toList());});
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
+        return cluster.getResources().stream().filter((r) -> permission("read", r)).map((x) -> x.toMO(currentPrincipal())).collect(Collectors.toList());
     }
     
     @Get("/name/:name/references")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
-    public List<CheckMO> getClusterReferences(BergamotDB db, @Var("site") Site site, String name)
+    @ListOf(CheckMO.class)
+    public List<CheckMO> getClusterReferencesByName(BergamotDB db, @Var("site") Site site, String name)
     {
-        return Util.nullable(db.getClusterByName(site.getId(), name), (e)->{return e.getReferences().stream().map((c) -> {return (CheckMO) c.toMO();}).collect(Collectors.toList());});
+        Cluster cluster = notNull(db.getClusterByName(site.getId(), name));
+        require(permission("read", cluster));
+        return cluster.getReferences().stream().filter((c) -> permission("read", c)).map((c) -> {return (CheckMO) c.toMO(currentPrincipal());}).collect(Collectors.toList());
     }
     
     @Get("/id/:id/references")
     @JSON(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster")
     @WithDataAdapter(BergamotDB.class)
+    @ListOf(CheckMO.class)
     public List<CheckMO> getClusterReferences(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getCluster(id), (e)->{return e.getReferences().stream().map((c) -> {return (CheckMO) c.toMO();}).collect(Collectors.toList());});
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
+        return cluster.getReferences().stream().filter((c) -> permission("read", c)).map((c) -> {return (CheckMO) c.toMO(currentPrincipal());}).collect(Collectors.toList());
     }
     
     @Get("/name/:name/config.xml")
     @XML(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster.config")
     @WithDataAdapter(BergamotDB.class)
-    public ClusterCfg getClusterConfig(BergamotDB db, @Var("site") Site site, String name)
+    @IgnoreBinding
+    public ClusterCfg getClusterConfigByName(BergamotDB db, @Var("site") Site site, String name)
     {
-        return Util.nullable(db.getClusterByName(site.getId(), name), Cluster::getConfiguration);
+        Cluster cluster = notNull(db.getClusterByName(site.getId(), name));
+        require(permission("read.config", cluster));
+        return cluster.getConfiguration();
     }
     
     @Get("/id/:id/config.xml")
     @XML(notFoundIfNull = true)
-    @RequirePermission("api.read.cluster.config")
     @WithDataAdapter(BergamotDB.class)
+    @IgnoreBinding
     public ClusterCfg getClusterConfig(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getCluster(id), Cluster::getConfiguration);
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read.config", cluster));
+        return cluster.getConfiguration();
     }
     
     @Get("/id/:id/suppress")
     @JSON()
-    @RequirePermission("api.write.cluster.suppress")
     @WithDataAdapter(BergamotDB.class)
     public String suppressCluster(BergamotDB db, @IsaObjectId(session = false) UUID id)
     { 
-        Cluster cluster = db.getCluster(id);
-        if (cluster == null) throw new BalsaNotFound("No cluster with id '" + id + "' exists.");
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("suppress", cluster));
         action("suppress-check", cluster);
         return "Ok";
     }
     
     @Get("/id/:id/unsuppress")
     @JSON()
-    @RequirePermission("api.write.cluster.unsuppress")
     @WithDataAdapter(BergamotDB.class)
     public String unsuppressCluster(BergamotDB db, @IsaObjectId(session = false) UUID id)
     { 
-        Cluster cluster = db.getCluster(id);
-        if (cluster == null) throw new BalsaNotFound("No cluster with id '" + id + "' exists.");
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("unsuppress", cluster));
         action("unsuppress-check", cluster);
         return "Ok";
     }
     
     @Get("/id/:id/suppress-resources")
     @JSON()
-    @RequirePermission("api.write.cluster.suppress")
-    @RequirePermission("api.write.resource.suppress")
     @WithDataAdapter(BergamotDB.class)
     public String suppressResourcesOnCluster(BergamotDB db, @IsaObjectId(session = false) UUID id)
     { 
-        Cluster cluster = db.getCluster(id);
-        if (cluster == null) throw new BalsaNotFound("No cluster with id '" + id + "' exists.");
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
         int suppressed = 0;
         for (Resource resource : cluster.getResources())
         {
-            action("suppress-check", resource);
-            suppressed++;
+            if (permission("suppress", resource))
+            {
+                action("suppress-check", resource);
+                suppressed++;
+            }
         }
         return "Ok, suppressed " + suppressed + " services";
     }
     
     @Get("/id/:id/unsuppress-resources")
     @JSON()
-    @RequirePermission("api.write.cluster.suppress")
-    @RequirePermission("api.write.resource.suppress")
     @WithDataAdapter(BergamotDB.class)
     public String unsuppressResourcesOnCluster(BergamotDB db, @IsaObjectId(session = false) UUID id)
     { 
-        Cluster cluster = db.getCluster(id);
-        if (cluster == null) throw new BalsaNotFound("No cluster with id '" + id + "' exists.");
+        Cluster cluster = notNull(db.getCluster(id));
+        require(permission("read", cluster));
         int unsuppressed = 0;
         for (Resource resource : cluster.getResources())
         {
-            action("unsuppress-check", resource);
-            unsuppressed++;
+            if (permission("unsuppress", resource))
+            {
+                action("unsuppress-check", resource);
+                unsuppressed++;
+            }
         }
         return "Ok, unsuppressed " + unsuppressed + " services";
     }

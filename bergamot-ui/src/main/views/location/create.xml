@@ -1,0 +1,56 @@
+<!DOCTYPE balsa SYSTEM "http://balsa.intrbiz.net/balsa.dtd">
+<?RenderLibrary com.intrbiz.balsa?>
+<!-- The index view -->
+<fragment xmlns="com.intrbiz.balsa" title="Add Location">
+
+	<div class="row">
+		<form id="create_location" name="create_location" method="post" action="#{path('/location/create')}">
+			<div rendered="#{! templates.isEmpty()}">
+				<label for="location_extends">Template</label>
+				<select id="location_extends" name="location_extends">
+					<option value="" selected="selected">Please select a template</option>
+					<data-set var="template" value="#{templates}">
+						<option value="#{template.id}">#{coalesce(template.summary, template.name)}</option>
+					</data-set>
+				</select>
+			</div>
+			<div>
+				<label for="location_summary">Summary</label>
+				<input type="text" id="location_summary" name="location_summary"/>
+			</div>
+			<div>
+				<label for="location_name">Name</label>
+				<input type="text" id="location_name" name="location_name"/>
+			</div>
+			<div>
+				<label for="location_location">Location</label>
+				<select id="location_location" name="location_location">
+					<option value="" selected="selected">No location</option>
+					<data-set var="location" value="#{locations}">
+						<option value="#{location.id}">#{coalesce(location.summary, location.name)}</option>
+					</data-set>
+				</select>
+			</div>
+			<div>
+				<label for="location_workerpool">Worker Pool</label>
+				<input type="text" id="location_workerpool" name="location_workerpool"/>
+			</div>
+			<div>
+				<label for="location_description">Description</label>
+				<textarea id="location_description" name="location_description"></textarea>
+			</div>
+			<div>
+				<input type="submit" value="Add Location"/>
+			</div>
+		</form>
+	</div>
+	
+	<script>
+		$(document).ready(function() {
+			$('#location_summary').copyInputTo('#location_name');
+			$('#location_name').checkObjectName('#location_name', 'location');
+			$('#location_summary').checkObjectName('#location_name', 'location');
+		});
+	</script>
+
+</fragment>

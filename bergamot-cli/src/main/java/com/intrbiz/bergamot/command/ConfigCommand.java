@@ -64,10 +64,10 @@ public class ConfigCommand extends BergamotCLICommand
                 String password = args.remove(0);
                 // talk to the API
                 BergamotClient client = new BergamotClient(url);
-                String hello = client.helloWorld().execute();
+                String hello = client.callHelloWorld().execute();
                 System.out.println("Successfully connected to " + name + " (" + url + ") => " + hello);
                 // auth
-                AuthTokenMO token = client.appAuthToken().app("Bergamot CLI").username(username).password(password).execute();
+                AuthTokenMO token = client.callGetAppAuthToken().appName("Bergamot CLI").username(username).password(password).execute();
                 System.out.println("Sucessfully authenticated with " + name);
                 // add the config
                 CLICfg cfg = CLICfg.loadConfiguration();

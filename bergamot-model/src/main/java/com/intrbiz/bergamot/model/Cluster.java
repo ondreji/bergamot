@@ -1,6 +1,7 @@
 package com.intrbiz.bergamot.model;
 
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -45,6 +46,14 @@ public class Cluster extends VirtualCheck<ClusterMO, ClusterCfg>
         try (BergamotDB db = BergamotDB.connect())
         {
             return db.getResourcesOnCluster(getId());
+        }
+    }
+    
+    public List<Resource> getResourcesForContact(Contact contact)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return contact.hasPermission("read", db.getResourcesOnCluster(getId()));
         }
     }
 
@@ -92,16 +101,34 @@ public class Cluster extends VirtualCheck<ClusterMO, ClusterCfg>
         }
         return categories.values();
     }
+    
+    public Collection<Category<Resource>> getCategorisedResourcesForContact(Contact contact)
+    {
+        Map<String, Category<Resource>> categories = new TreeMap<String, Category<Resource>>();
+        for (Resource resource : this.getResourcesForContact(contact))
+        {
+            // get the category for this service
+            String categoryTag = Util.coalesceEmpty(resource.resolveCategory(), "default");
+            Category<Resource> category = categories.get(categoryTag.toLowerCase());
+            if (category == null)
+            {
+                category = new Category<Resource>(categoryTag);
+                categories.put(categoryTag.toLowerCase(), category);
+            }
+            // by application too?
+            String applicationTag = resource.resolveApplication();
+            if (applicationTag == null) category.addCheck(resource);
+            else category.getOrAddApplication(applicationTag).addCheck(resource);
+        }
+        return categories.values();
+    }
 
     @Override
-    public ClusterMO toMO(boolean stub)
+    public ClusterMO toMO(Contact contact, EnumSet<MOFlag> options)
     {
         ClusterMO mo = new ClusterMO();
-        super.toMO(mo, stub);
-        if (! stub)
-        {
-            mo.setResources(this.getResources().stream().map(Resource::toStubMO).collect(Collectors.toList()));
-        }
+        super.toMO(mo, contact, options);
+        if (options.contains(MOFlag.RESOURCES)) mo.setResources(this.getResources().stream().filter((x) -> contact == null || contact.hasPermission("read", x)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
         return mo;
     }
     

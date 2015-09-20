@@ -7,6 +7,8 @@ import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.data.BergamotDB;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.ui.BergamotApp;
+import com.intrbiz.data.DataManager;
+import com.intrbiz.data.cache.Cache;
 import com.intrbiz.metadata.Any;
 import com.intrbiz.metadata.Prefix;
 import com.intrbiz.metadata.RequirePermission;
@@ -18,7 +20,6 @@ import com.intrbiz.metadata.Template;
 @Template("layout/main")
 @RequireValidPrincipal()
 @RequirePermission("ui.admin")
-@RequirePermission("ui.admin.cluster")
 public class UtilsAdminRouter extends Router<BergamotApp>
 {   
     private Logger logger = Logger.getLogger(UtilsAdminRouter.class);
@@ -38,5 +39,15 @@ public class UtilsAdminRouter extends Router<BergamotApp>
         db.cacheClear();
         var("cacheCleared", true);
         encode("admin/utils/index");
+    }
+    
+    @Any("/cache/view")
+    @WithDataAdapter(BergamotDB.class)
+    public void viewCache(BergamotDB db, @SessionVar("site") Site site)
+    {
+        require(app().isDevEnv());
+        Cache cache = DataManager.get().cache("cache.bergamot");
+        var("cachekeys", cache.keySet(""));
+        encode("admin/utils/cache/view");
     }
 }

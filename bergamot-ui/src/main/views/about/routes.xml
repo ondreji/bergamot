@@ -1,0 +1,39 @@
+<!DOCTYPE balsa SYSTEM "http://balsa.intrbiz.net/balsa.dtd">
+<?RenderLibrary com.intrbiz.balsa?>
+<!-- The index view -->
+<fragment xmlns="com.intrbiz.balsa" title="Web Routes">
+    
+    <div clas="row">
+    	<div class="col12">
+			<table>
+				<tr>content
+					<th>Method</th>
+					<th>Path</th>
+					<th>As</th>
+					<th>Param</th>
+				</tr>
+				<data-set var="route" value="#{routes}">
+					<tr>
+						<td>#{route.method}</td>
+						<td>#{route.path}</td>
+						<td>
+							<ul>
+								<data-set var="as" value="#{route.parameters}">
+									<li rendered="#{as.isAs()}">#{as.name} :: #{as.type.getSimpleName()}</li>
+								</data-set>
+							</ul>
+						</td>
+						<td>
+							<ul>
+								<data-set var="param" value="#{route.parameters}">
+									<li rendered="#{! param.isAs()}">#{param.name} :: #{param.type.getSimpleName()}</li>
+								</data-set>
+							</ul>
+						</td>
+					</tr>
+				</data-set>
+			</table>
+		</div>
+   	</div>
+    
+</fragment>

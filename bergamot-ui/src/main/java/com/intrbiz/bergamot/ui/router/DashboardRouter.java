@@ -25,9 +25,9 @@ public class DashboardRouter extends Router<BergamotApp>
     @WithDataAdapter(BergamotDB.class)
     public void index(BergamotDB db, @SessionVar("site") Site site)
     {
-        model("alerts", db.listAlerts(site.getId()).stream().map(Alert::getCheck).collect(Collectors.toList()));
-        model("groups", orderGroupsByStatus(db.getRootGroups(site.getId())));
-        model("locations", orderLocationsByStatus(db.getRootLocations(site.getId())));
+        model("alerts", db.listAlerts(site.getId()).stream().map(Alert::getCheck).filter((c) -> permission("read", c)).collect(Collectors.toList()));
+        model("groups", orderGroupsByStatus(permission("read", db.getRootGroups(site.getId()))));
+        model("locations", orderLocationsByStatus(permission("read", db.getRootLocations(site.getId()))));
         encode("index");
     }
 }

@@ -1,6 +1,7 @@
 package com.intrbiz.bergamot.model;
 
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -97,6 +98,14 @@ public class Host extends ActiveCheck<HostMO, HostCfg>
         }
     }
     
+    public List<Service> getServicesForContact(Contact contact)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return contact.hasPermission("read", db.getServicesOnHost(this.getId()));
+        }
+    }
+    
     public Service getService(String name)
     {
         try (BergamotDB db = BergamotDB.connect())
@@ -149,6 +158,27 @@ public class Host extends ActiveCheck<HostMO, HostCfg>
         }
         return categories.values();
     }
+    
+    public Collection<Category<Service>> getCategorisedServicesForContact(Contact contact)
+    {
+        Map<String, Category<Service>> categories = new TreeMap<String, Category<Service>>();
+        for (Service service : this.getServicesForContact(contact))
+        {
+            // get the category for this service
+            String categoryTag = Util.coalesceEmpty(service.resolveCategory(), "default");
+            Category<Service> category = categories.get(categoryTag.toLowerCase());
+            if (category == null)
+            {
+                category = new Category<Service>(categoryTag);
+                categories.put(categoryTag.toLowerCase(), category);
+            }
+            // by application too?
+            String applicationTag = service.resolveApplication();
+            if (applicationTag == null) category.addCheck(service);
+            else category.getOrAddApplication(applicationTag).addCheck(service);
+        }
+        return categories.values();
+    }
 
     // traps
 
@@ -157,6 +187,14 @@ public class Host extends ActiveCheck<HostMO, HostCfg>
         try (BergamotDB db = BergamotDB.connect())
         {
             return db.getTrapsOnHost(this.getId());
+        }
+    }
+    
+    public Collection<Trap> getTrapsForContact(Contact contact)
+    {
+        try (BergamotDB db = BergamotDB.connect())
+        {
+            return contact.hasPermission("read", db.getTrapsOnHost(this.getId()));
         }
     }
 
@@ -212,6 +250,27 @@ public class Host extends ActiveCheck<HostMO, HostCfg>
         }
         return categories.values();
     }
+    
+    public Collection<Category<Trap>> getCategorisedTrapsForContact(Contact contact)
+    {
+        Map<String, Category<Trap>> categories = new TreeMap<String, Category<Trap>>();
+        for (Trap trap : this.getTrapsForContact(contact))
+        {
+            // get the category for this service
+            String categoryTag = Util.coalesceEmpty(trap.resolveCategory(), "default");
+            Category<Trap> category = categories.get(categoryTag.toLowerCase());
+            if (category == null)
+            {
+                category = new Category<Trap>(categoryTag);
+                categories.put(categoryTag.toLowerCase(), category);
+            }
+            // by application too?
+            String applicationTag = trap.resolveApplication();
+            if (applicationTag == null) category.addCheck(trap);
+            else category.getOrAddApplication(applicationTag).addCheck(trap);
+        }
+        return categories.values();
+    }
 
     // location
 
@@ -239,16 +298,17 @@ public class Host extends ActiveCheck<HostMO, HostCfg>
     }
 
     @Override
-    public HostMO toMO(boolean stub)
+    public HostMO toMO(Contact contact, EnumSet<MOFlag> options)
     {
         HostMO mo = new HostMO();
-        super.toMO(mo, stub);
+        super.toMO(mo, contact, options);
         mo.setAddress(this.getAddress());
-        if (!stub)
+        if (options.contains(MOFlag.SERVICES)) mo.setServices(this.getServices().stream().filter((x) -> contact == null || contact.hasPermission("read", x)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
+        if (options.contains(MOFlag.TRAPS)) mo.setTraps(this.getTraps().stream().filter((x) -> contact == null || contact.hasPermission("read", x)).map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
+        if (options.contains(MOFlag.LOCATION))
         {
-            mo.setServices(this.getServices().stream().map(Service::toStubMO).collect(Collectors.toList()));
-            mo.setTraps(this.getTraps().stream().map(Trap::toStubMO).collect(Collectors.toList()));
-            mo.setLocation(Util.nullable(this.getLocation(), Location::toStubMO));
+            Location location = this.getLocation();
+            if (location != null && (contact == null || contact.hasPermission("read", location))) mo.setLocation(location.toStubMO(contact));
         }
         return mo;
     }
