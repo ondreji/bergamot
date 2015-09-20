@@ -165,12 +165,8 @@ public class HTTPChecker
             // enabled ciphers
             if (ciphers == null || ciphers.isEmpty())
             {
-                /*
-                 * Default to using non GCM ciphers, there 
-                 * is a bug in JDK8 which is leading to NullPointerExceptions 
-                 * when using GCM ciphers - https://bugs.openjdk.java.net/browse/JDK-8049855?page=com.atlassian.jira.plugin.system.issuetabpanels:comment-tabpanel
-                 */
-                sslEngine.setEnabledCipherSuites(TLSConstants.getCipherNames(TLSConstants.CIPHERS.SAFE_CIPHERS_NO_GCM));
+                // default to safe ciphers which are supported by this JVM
+                sslEngine.setEnabledCipherSuites(TLSConstants.CIPHERS.SAFE_SUPPORTED_CIPHER_NAMES);
             }
             else
             {
@@ -207,6 +203,8 @@ public class HTTPChecker
             final Consumer<Throwable> errorHandler
     )
     {
+        // build the url
+        String url = (ssl ? "https" : "http") + "://" + host + (port > 0 ? ":" + port : "") + "" + request.getUri();
         // configure the client
         Bootstrap b = new Bootstrap();
         b.group(this.eventLoop);
@@ -226,7 +224,7 @@ public class HTTPChecker
                         new HttpClientCodec(),
                         new HttpContentDecompressor(),
                         new HttpObjectAggregator(1 * 1024 * 1024 /* 1 MiB */),
-                        new HTTPClientHandler(HTTPChecker.this.timer, sslEngine, request, responseHandler, errorHandler)
+                        new HTTPClientHandler(url, HTTPChecker.this.timer, sslEngine, request, responseHandler, errorHandler)
                 );
             }
         });

@@ -48,7 +48,7 @@ public class SiteXMLCommand extends BergamotCLICommand
         // connect to the API
         BergamotClient client = new BergamotClient(site.getUrl(), site.getAuthToken());
         // call the hello world test
-        System.out.println(client.buildSiteConfig().execute().toString());
+        System.out.println(client.callBuildSiteConfig().execute().toString());
         return 0;
     }
 }

@@ -56,7 +56,7 @@ public class AlertsCommand extends BergamotCLICommand
         // connect to the API
         BergamotClient client = new BergamotClient(site.getUrl(), site.getAuthToken());
         // call the hello world test
-        for (AlertMO alert : client.getAlerts().execute())
+        for (AlertMO alert : client.callGetAlerts().execute())
         {
             System.out.print("Alert [" + alert.getId() + "] - " + alert.getStatus() + " " + alert.getCheck().getCheckType() + " " + alert.getCheck().getName());
             if (alert.getCheck() instanceof ServiceMO) System.out.print(" on host " + ((ServiceMO) alert.getCheck()).getHost().getName());

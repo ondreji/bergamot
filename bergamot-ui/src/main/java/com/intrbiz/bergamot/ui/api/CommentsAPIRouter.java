@@ -4,11 +4,10 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import com.intrbiz.Util;
 import com.intrbiz.balsa.engine.route.Router;
-import com.intrbiz.balsa.error.http.BalsaNotFound;
 import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.metadata.IgnoreBinding;
 import com.intrbiz.bergamot.metadata.IsaObjectId;
 import com.intrbiz.bergamot.model.Alert;
 import com.intrbiz.bergamot.model.Check;
@@ -23,6 +22,7 @@ import com.intrbiz.metadata.CoalesceMode;
 import com.intrbiz.metadata.Get;
 import com.intrbiz.metadata.IsaLong;
 import com.intrbiz.metadata.JSON;
+import com.intrbiz.metadata.ListOf;
 import com.intrbiz.metadata.Param;
 import com.intrbiz.metadata.Prefix;
 import com.intrbiz.metadata.RequirePermission;
@@ -35,28 +35,33 @@ public class CommentsAPIRouter extends Router<BergamotApp>
 {
 
     @Get("/id/:id")
-    @RequirePermission("api.read.comment")
     @JSON(notFoundIfNull = true)
     @WithDataAdapter(BergamotDB.class)
     public CommentMO getComment(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return Util.nullable(db.getComment(id), Comment::toMO);
+        Comment comment = notNull(db.getComment(id));
+        require(permission("read.comment", comment.getObjectId()));
+        return comment.toMO(currentPrincipal());
     }
     
     @Get("/id/:id/remove")
-    @RequirePermission("api.write.comment.remove")
     @JSON()
     @WithDataAdapter(BergamotDB.class)
     public Boolean removeComment(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        db.removeComment(id);
+        Comment comment = db.getComment(id);
+        if (comment != null)
+        {
+            require(permission("remove.comment", comment.getObjectId()));
+            db.removeComment(id);
+        }
         return true;
     }
     
     @Get("/for-object/id/:id")
-    @RequirePermission("api.read.comment")
     @JSON()
     @WithDataAdapter(BergamotDB.class)
+    @ListOf(CommentMO.class)
     public List<CommentMO> getCommentsForObject(
             BergamotDB db, 
             @IsaObjectId(session = false) UUID id, 
@@ -64,11 +69,11 @@ public class CommentsAPIRouter extends Router<BergamotApp>
             @Param("limit") @IsaLong(min = 0, max = 1000, mandatory = true, defaultValue = 10, coalesce = CoalesceMode.ON_NULL) Long limit
     )
     {
-        return db.getCommentsForObject(id, offset, limit).stream().map(Comment::toMO).collect(Collectors.toList());
+        require(permission("read.comment", id));
+        return db.getCommentsForObject(id, offset, limit).stream().map((x) -> x.toMO(currentPrincipal())).collect(Collectors.toList());
     }
     
     @Any("/add-comment-to-check/id/:id")
-    @RequirePermission("api.write.comment.create")
     @JSON()
     @WithDataAdapter(BergamotDB.class)
     public CommentMO addCommentToCheck(
@@ -78,12 +83,11 @@ public class CommentsAPIRouter extends Router<BergamotApp>
             @Param("comment") @CheckStringLength(min = 1, max = 4096, mandatory = true) String message
     )
     {
-        Check<?, ?> check = db.getCheck(id);
-        if (check == null) throw new BalsaNotFound("No check with the id: " + id);
-        // the comment
+        Check<?, ?> check = notNull(db.getCheck(id));
+        require(permission("write.comment", check));
         Comment comment = new Comment().author(currentPrincipal()).on(check).summary(summary).message(message);
         db.setComment(comment);
-        return comment.toMO();
+        return comment.toMO(currentPrincipal());
     }
     
     @Any("/add-comment-to-alert/id/:id")
@@ -96,16 +100,14 @@ public class CommentsAPIRouter extends Router<BergamotApp>
             @Param("comment") @CheckStringLength(min = 1, max = 4096, mandatory = true) String message
     )
     {
-        Alert alert = db.getAlert(id);
-        if (alert == null) throw new BalsaNotFound("No alert with the id: " + id);
-        // the comment
+        Alert alert = notNull(db.getAlert(id));
+        require(permission("write.comment", alert.getCheckId()));
         Comment comment = new Comment().author(currentPrincipal()).on(alert).summary(summary).message(message);
         db.setComment(comment);
-        return comment.toMO();
+        return comment.toMO(currentPrincipal());
     }
     
     @Any("/add-comment-to-downtime/id/:id")
-    @RequirePermission("api.write.comment.create")
     @JSON()
     @WithDataAdapter(BergamotDB.class)
     public CommentMO addCommentToDowntime(
@@ -115,12 +117,11 @@ public class CommentsAPIRouter extends Router<BergamotApp>
             @Param("comment") @CheckStringLength(min = 1, max = 4096, mandatory = true) String message
     )
     {
-        Downtime downtime = db.getDowntime(id);
-        if (downtime == null) throw new BalsaNotFound("No downtime with the id: " + id);
-        // the comment
+        Downtime downtime = notNull(db.getDowntime(id));
+        require(permission("write.comment", downtime.getCheckId()));
         Comment comment = new Comment().author(currentPrincipal()).on(downtime).summary(summary).message(message);
         db.setComment(comment);
-        return comment.toMO();
+        return comment.toMO(currentPrincipal());
     }
     
     @Any("/add-comment-to-object/id/:id")
@@ -135,18 +136,21 @@ public class CommentsAPIRouter extends Router<BergamotApp>
             @Param("comment") @CheckStringLength(min = 1, max = 4096, mandatory = true) String message
     )
     {
-        // the comment
+        require(permission("write.comment", id));
         Comment comment = new Comment().author(currentPrincipal()).on(site, id).summary(summary).message(message);
         db.setComment(comment);
-        return comment.toMO();
+        return comment.toMO(currentPrincipal());
     }
     
     @Get("/id/:id/render")
     @RequirePermission("api.read.comment")
     @JSON()
     @WithDataAdapter(BergamotDB.class)
+    @IgnoreBinding
     public String renderComment(BergamotDB db, @IsaObjectId(session = false) UUID id)
     {
-        return var("comment", db.getComment(id)) == null ? null : encodeBuffered("include/comment");
+        Comment comment = var("comment", notNull(db.getComment(id)));
+        require(permission("read.comment", comment.getObjectId()));
+        return encodeBuffered("include/comment");
     }
 }

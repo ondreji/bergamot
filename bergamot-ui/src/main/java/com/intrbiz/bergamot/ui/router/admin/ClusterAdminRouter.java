@@ -1,5 +1,7 @@
 package com.intrbiz.bergamot.ui.router.admin;
 
+import java.util.stream.Collectors;
+
 import com.intrbiz.balsa.engine.route.Router;
 import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.config.model.ClusterCfg;
@@ -18,15 +20,14 @@ import com.intrbiz.metadata.Template;
 @Template("layout/main")
 @RequireValidPrincipal()
 @RequirePermission("ui.admin")
-@RequirePermission("ui.admin.cluster")
 public class ClusterAdminRouter extends Router<BergamotApp>
 {    
     @Any("/")
     @WithDataAdapter(BergamotDB.class)
     public void index(BergamotDB db, @SessionVar("site") Site site)
     {
-        model("clusters", db.listClusters(site.getId()));
-        model("cluster_templates", db.listConfigTemplates(site.getId(), Configuration.getRootElement(ClusterCfg.class)));
+        model("clusters", db.listClusters(site.getId()).stream().filter((c) -> permission("read.config", c.getId())).collect(Collectors.toList()));
+        model("cluster_templates", db.listConfigTemplates(site.getId(), Configuration.getRootElement(ClusterCfg.class)).stream().filter((c) -> permission("read.config", c.getId())).collect(Collectors.toList()));
         encode("admin/cluster/index");
     }
 }

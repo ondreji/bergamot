@@ -12,17 +12,15 @@ import javax.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 
 import com.intrbiz.bergamot.config.adapter.CSVAdapter;
 import com.intrbiz.bergamot.config.resolver.ResolveWith;
-import com.intrbiz.bergamot.config.resolver.stratergy.CoalesceEmptyCollection;
+import com.intrbiz.bergamot.config.resolver.stratergy.SmartMergeSet;
 
 @XmlType(name = "group")
 @XmlRootElement(name = "group")
-public class GroupCfg extends NamedObjectCfg<GroupCfg>
+public class GroupCfg extends SecuredObjectCfg<GroupCfg>
 {
     private static final long serialVersionUID = 1L;
     
     private Set<String> groups = new LinkedHashSet<String>();
-    
-    private Set<String> securityDomains = new LinkedHashSet<String>();
 
     public GroupCfg()
     {
@@ -38,7 +36,7 @@ public class GroupCfg extends NamedObjectCfg<GroupCfg>
 
     @XmlJavaTypeAdapter(CSVAdapter.class)
     @XmlAttribute(name = "groups")
-    @ResolveWith(CoalesceEmptyCollection.class)
+    @ResolveWith(SmartMergeSet.class)
     public Set<String> getGroups()
     {
         return groups;
@@ -62,19 +60,6 @@ public class GroupCfg extends NamedObjectCfg<GroupCfg>
     public boolean containsGroup(String name)
     {
         return this.groups.contains(name);
-    }
-    
-    @XmlJavaTypeAdapter(CSVAdapter.class)
-    @XmlAttribute(name = "security-domains")
-    @ResolveWith(CoalesceEmptyCollection.class)
-    public Set<String> getSecurityDomains()
-    {
-        return securityDomains;
-    }
-
-    public void setSecurityDomains(Set<String> securityDomains)
-    {
-        this.securityDomains = securityDomains;
     }
 
     public List<TemplatedObjectCfg<?>> getTemplatedChildObjects()

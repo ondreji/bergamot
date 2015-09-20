@@ -10,21 +10,22 @@ import com.intrbiz.balsa.engine.security.GenericAuthenticationToken;
 import com.intrbiz.balsa.error.BalsaConversionError;
 import com.intrbiz.balsa.error.BalsaSecurityException;
 import com.intrbiz.balsa.error.BalsaValidationError;
+import com.intrbiz.balsa.error.http.BalsaBadRequest;
 import com.intrbiz.balsa.error.http.BalsaNotFound;
 import com.intrbiz.balsa.http.HTTP.HTTPStatus;
 import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.metadata.IgnoreBinding;
 import com.intrbiz.bergamot.model.APIToken;
 import com.intrbiz.bergamot.model.Contact;
 import com.intrbiz.bergamot.model.message.AuthTokenMO;
-import com.intrbiz.bergamot.model.message.ErrorMO;
+import com.intrbiz.bergamot.model.message.api.error.APIError;
 import com.intrbiz.bergamot.ui.BergamotApp;
 import com.intrbiz.converter.ConversionException;
 import com.intrbiz.metadata.Any;
 import com.intrbiz.metadata.Before;
 import com.intrbiz.metadata.Catch;
 import com.intrbiz.metadata.CheckStringLength;
-import com.intrbiz.metadata.Get;
 import com.intrbiz.metadata.IgnorePaths;
 import com.intrbiz.metadata.JSON;
 import com.intrbiz.metadata.Order;
@@ -46,9 +47,9 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**\\.xml")
     @Order(10)
     @XML(status = HTTPStatus.NotFound)
-    public ErrorMO notFoundXML()
+    public APIError notFoundXML()
     {
-        return new ErrorMO("Not found");
+        return new APIError("Not found");
     }
     
     /**
@@ -58,9 +59,9 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**\\.xml")
     @Order(10)
     @XML(status = HTTPStatus.Forbidden)
-    public ErrorMO accessDeniedXML()
+    public APIError accessDeniedXML()
     {
-        return new ErrorMO("Access denied");
+        return new APIError("Access denied");
     }
     
     /**
@@ -70,9 +71,9 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**")
     @Order(20)
     @JSON(status = HTTPStatus.NotFound)
-    public ErrorMO notFound()
+    public APIError notFound()
     {
-        return new ErrorMO("Not found");
+        return new APIError("Not found");
     }
     
     /**
@@ -82,9 +83,9 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**")
     @Order(20)
     @JSON(status = HTTPStatus.Forbidden)
-    public ErrorMO accessDenied()
+    public APIError accessDenied()
     {
-        return new ErrorMO("Access denied");
+        return new APIError("Access denied");
     }
     
     /**
@@ -94,7 +95,7 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**")
     @Order(30)
     @JSON(status = HTTPStatus.BadRequest)
-    public ErrorMO invalideRequest()
+    public APIError invalideRequest()
     {
         for (ConversionException cex : balsa().getConversionErrors())
         {
@@ -104,7 +105,24 @@ public class APIRouter extends Router<BergamotApp>
         {
             logger.error("Validation exception on request", vex);
         }
-        return new ErrorMO("Bad Request");
+        return new APIError("Bad Request");
+    }
+    
+    /**
+     * Validation and Conversion error handler
+     */
+    @Catch(BalsaBadRequest.class)
+    @Any("**")
+    @Order(40)
+    @JSON(status = HTTPStatus.BadRequest)
+    public APIError badRequest()
+    {
+        Throwable error = balsa().getException();
+        if (error != null)
+        {
+            logger.error("Caught internal bad request error: " + error.getMessage(), error);
+        }
+        return new APIError("Bad Request: " + (error == null || Util.isEmpty(error.getMessage()) ? "Not sure what happened here!" : error.getMessage()));
     }
     
     /**
@@ -114,14 +132,14 @@ public class APIRouter extends Router<BergamotApp>
     @Any("**")
     @Order(Order.LAST)
     @JSON(status = HTTPStatus.InternalServerError)
-    public ErrorMO internalServerError()
+    public APIError internalServerError()
     {
         Throwable error = balsa().getException();
         if (error != null)
         {
             logger.error("Caught internal server error: " + error.getMessage(), error);
         }
-        return new ErrorMO(error == null || Util.isEmpty(error.getMessage()) ? "Not sure what happened here!" : error.getMessage());
+        return new APIError(error == null || Util.isEmpty(error.getMessage()) ? "Not sure what happened here!" : error.getMessage());
     }
     
     /**
@@ -169,6 +187,7 @@ public class APIRouter extends Router<BergamotApp>
      */
     @Any("/auth-token")
     @JSON()
+    @IgnoreBinding
     public AuthTokenMO getAuthToken(@Param("username") String username, @Param("password") String password)
     {
         authenticateRequest(username, password);
@@ -193,7 +212,7 @@ public class APIRouter extends Router<BergamotApp>
     /**
      * Change the current users password
      */
-    @Get("/change-password")
+    @Any("/change-password")
     @JSON()
     @RequireValidPrincipal()
     @WithDataAdapter(BergamotDB.class)

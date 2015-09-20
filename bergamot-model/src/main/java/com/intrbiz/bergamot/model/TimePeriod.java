@@ -5,6 +5,7 @@ import java.io.ObjectInputStream;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Calendar;
+import java.util.EnumSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.UUID;
@@ -27,7 +28,7 @@ import com.intrbiz.data.db.compiler.meta.SQLVersion;
  */
 @SQLTable(schema = BergamotDB.class, name = "timeperiod", since = @SQLVersion({ 1, 0, 0 }))
 @SQLUnique(name = "name_unq", columns = { "site_id", "name" })
-public class TimePeriod extends NamedObject<TimePeriodMO, TimePeriodCfg> implements TimeRange
+public class TimePeriod extends SecuredObject<TimePeriodMO, TimePeriodCfg> implements TimeRange
 {
     private static final long serialVersionUID = 1L;
     
@@ -142,15 +143,12 @@ public class TimePeriod extends NamedObject<TimePeriodMO, TimePeriodCfg> impleme
     }
 
     @Override
-    public TimePeriodMO toMO(boolean stub)
+    public TimePeriodMO toMO(Contact contact, EnumSet<MOFlag> options)
     {
         TimePeriodMO mo = new TimePeriodMO();
-        super.toMO(mo, stub);
-        if (!stub)
-        {
-            mo.setExcludes(this.getExcludes().stream().map(TimePeriod::toStubMO).collect(Collectors.toList()));
-            mo.setRanges(this.getRanges().stream().map(TimeRange::toString).collect(Collectors.toList()));
-        }
+        super.toMO(mo, contact, options);
+        if (options.contains(MOFlag.EXCLUDES)) mo.setExcludes(this.getExcludes().stream().map((x) -> x.toStubMO(contact)).collect(Collectors.toList()));
+        if (options.contains(MOFlag.RANGES)) mo.setRanges(this.getRanges().stream().map(TimeRange::toString).collect(Collectors.toList()));
         return mo;
     }
 

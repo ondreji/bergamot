@@ -9,9 +9,10 @@ import com.intrbiz.balsa.metadata.WithDataAdapter;
 import com.intrbiz.bergamot.data.BergamotDB;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.ui.BergamotApp;
-import com.intrbiz.metadata.Any;
+import com.intrbiz.metadata.Get;
 import com.intrbiz.metadata.IsaInt;
 import com.intrbiz.metadata.JSON;
+import com.intrbiz.metadata.ListOf;
 import com.intrbiz.metadata.Prefix;
 import com.intrbiz.metadata.RequireValidPrincipal;
 import com.intrbiz.metadata.Var;
@@ -20,7 +21,7 @@ import com.intrbiz.metadata.Var;
 @RequireValidPrincipal()
 public class UtilAPIRouter extends Router<BergamotApp>
 {    
-    @Any("/id/new")
+    @Get("/id/new")
     @JSON(notFoundIfNull = true)
     @WithDataAdapter(BergamotDB.class)
     public UUID newId(@Var("site") Site site)
@@ -28,10 +29,11 @@ public class UtilAPIRouter extends Router<BergamotApp>
         return site.randomObjectId();
     }
     
-    @Any("/id/new/:count")
+    @Get("/id/new/:count")
     @JSON(notFoundIfNull = true)
     @WithDataAdapter(BergamotDB.class)
-    public List<UUID> newId(@Var("site") Site site, @IsaInt(min = 1, max = 1000) int count)
+    @ListOf(UUID.class)
+    public List<UUID> newIds(@Var("site") Site site, @IsaInt(min = 1, max = 1000) Integer count)
     {
         List<UUID> ids = new LinkedList<UUID>();
         for (int i = 0; i < count; i++)

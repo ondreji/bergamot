@@ -65,7 +65,7 @@ public class AgentCommand extends BergamotCLICommand
             // call the hello world test
             try
             {
-                client.helloYou().execute();
+                client.callHelloYou().execute();
             }
             catch (Exception e)
             {
@@ -74,7 +74,7 @@ public class AgentCommand extends BergamotCLICommand
             // generate a key pair
             KeyPair pair = RSAUtil.generateRSAKeyPair(2048);
             // sign the certificate
-            List<Certificate> chain = client.signAgentKey().commonName(commonName).publicKey(pair.getPublic()).execute();
+            List<Certificate> chain = client.callSignAgentKey().commonName(commonName).publicKey(pair.getPublic()).execute();
             Certificate agentCrt = chain.get(0);
             Certificate siteCrt  = chain.get(1);
             Certificate caCrt    = chain.get(2);

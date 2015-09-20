@@ -4,11 +4,11 @@
 <fragment xmlns="com.intrbiz.balsa" title="Host #{host.summary}">
 
 	<div class="row submenu pull-right">
-		<a rendered="#{host.suppressed}"   href="/host/unsuppress/#{host.id}">Unsuppress</a>
-		<a rendered="#{!host.suppressed}"  href="/host/suppress/#{host.id}">Suppress</a>
-		<a rendered="#{host.enabled}"      href="/host/disable/#{host.id}">Disable</a>
-		<a rendered="#{!host.enabled}"     href="/host/enable/#{host.id}">Enable</a>
-		<a href="/host/execute/#{host.id}" id="check-now" data-check-id="#{host.id}">Check now</a>
+		<a rendered="#{host.suppressed and Balsa().permission('unsuppress', host)}"   href="/host/unsuppress/#{host.id}">Unsuppress</a>
+		<a rendered="#{(!host.suppressed) and Balsa().permission('suppress', host)}"  href="/host/suppress/#{host.id}">Suppress</a>
+		<a rendered="#{host.enabled and Balsa().permission('disable', host)}"         href="/host/disable/#{host.id}">Disable</a>
+		<a rendered="#{(!host.enabled) and Balsa().permission('enable', host)}"       href="/host/enable/#{host.id}">Enable</a>
+		<a rendered="#{Balsa().permission('execute', host)}"                          href="/host/execute/#{host.id}" id="check-now" data-check-id="#{host.id}">Check now</a>
 	</div>
 
 	<div class="row">
@@ -79,7 +79,7 @@
 		<a href="/host/execute-services/#{host.id}"    id="check-services-now"  data-host-id="#{host.id}">Check all now</a>
 	</div>
 
-	<data-set var="category" value="#{host.getCategorisedServices()}">
+	<data-set var="category" value="#{host.getCategorisedServicesForContact(Balsa().currentPrincipal())}">
 		<div class="row hostgroup services">
 			<h3 rendered="#{category.name != 'default'}">Category: #{ucfirst(category.name)}</h3>
 			<div class="row hostgroup services">
@@ -102,7 +102,7 @@
 	
 	<h2 rendered="#{! host.traps.isEmpty()}">Traps</h2>
 	
-	<data-set var="category" value="#{host.getCategorisedTraps()}">
+	<data-set var="category" value="#{host.getCategorisedTrapsForContact(Balsa().currentPrincipal())}">
 		<div class="row hostgroup services">
 			<h3 rendered="#{category.name != 'default'}">Category: #{ucfirst(category.name)}</h3>
 			<div class="row hostgroup services">

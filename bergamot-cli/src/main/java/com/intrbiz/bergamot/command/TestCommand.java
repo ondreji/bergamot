@@ -50,7 +50,7 @@ public class TestCommand extends BergamotCLICommand
         // call the hello world test
         try
         {
-            System.out.println("Test basic API connectivity: " + client.helloWorld().execute());
+            System.out.println("Test basic API connectivity: " + client.callHelloWorld().execute());
         }
         catch (Exception e)
         {
@@ -59,7 +59,7 @@ public class TestCommand extends BergamotCLICommand
         // call the hello you test
         try
         {
-            System.out.println("Test authenticated API connectivity: " + client.helloYou().execute());
+            System.out.println("Test authenticated API connectivity: " + client.callHelloYou().execute());
         }
         catch (Exception e)
         {

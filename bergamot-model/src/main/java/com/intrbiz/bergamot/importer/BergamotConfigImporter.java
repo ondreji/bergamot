@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 import org.apache.log4j.Logger;
 
 import com.intrbiz.Util;
+import com.intrbiz.bergamot.config.model.AccessControlCfg;
 import com.intrbiz.bergamot.config.model.ActiveCheckCfg;
 import com.intrbiz.bergamot.config.model.BergamotCfg;
 import com.intrbiz.bergamot.config.model.CheckCfg;
@@ -30,6 +31,7 @@ import com.intrbiz.bergamot.config.model.NotificationsCfg;
 import com.intrbiz.bergamot.config.model.PassiveCheckCfg;
 import com.intrbiz.bergamot.config.model.RealCheckCfg;
 import com.intrbiz.bergamot.config.model.ResourceCfg;
+import com.intrbiz.bergamot.config.model.SecuredObjectCfg;
 import com.intrbiz.bergamot.config.model.SecurityDomainCfg;
 import com.intrbiz.bergamot.config.model.ServiceCfg;
 import com.intrbiz.bergamot.config.model.TeamCfg;
@@ -40,6 +42,7 @@ import com.intrbiz.bergamot.config.model.TrapCfg;
 import com.intrbiz.bergamot.config.model.VirtualCheckCfg;
 import com.intrbiz.bergamot.config.validator.ValidatedBergamotConfiguration;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.model.AccessControl;
 import com.intrbiz.bergamot.model.ActiveCheck;
 import com.intrbiz.bergamot.model.Check;
 import com.intrbiz.bergamot.model.CheckCommand;
@@ -55,6 +58,7 @@ import com.intrbiz.bergamot.model.Notifications;
 import com.intrbiz.bergamot.model.PassiveCheck;
 import com.intrbiz.bergamot.model.RealCheck;
 import com.intrbiz.bergamot.model.Resource;
+import com.intrbiz.bergamot.model.SecuredObject;
 import com.intrbiz.bergamot.model.SecurityDomain;
 import com.intrbiz.bergamot.model.Service;
 import com.intrbiz.bergamot.model.Site;
@@ -106,6 +110,10 @@ public class BergamotConfigImporter
     private List<Contact> delayedContactRegistrations = new LinkedList<Contact>();
     
     private Function<Contact, String> registrationURLSupplier;
+    
+    private boolean rebuildPermissions = false;
+    
+    private boolean clearPermissionsCache = false;
     
     public BergamotConfigImporter(ValidatedBergamotConfiguration validated)
     {
@@ -172,6 +180,17 @@ public class BergamotConfigImporter
                         this.loadHosts(db);
                         // clusters
                         this.loadClusters(db);
+                        // rebuild computed permissions
+                        if (this.rebuildPermissions)
+                        {
+                            this.report.info("Rebuilding computed permissions");
+                            db.buildPermissions(this.site.getId());
+                        }
+                        if (this.clearPermissionsCache)
+                        {
+                            this.report.info("Clearing permissions cache");
+                            db.invalidatePermissionsCache(this.site.getId());
+                        }
                     });
                     // delayed actions
                     if (this.online)
@@ -202,7 +221,7 @@ public class BergamotConfigImporter
                                         // send a notification, only via email
                                         notificationsProducer.publish(
                                                 new NotificationKey(contact.getSite().getId()),
-                                                new RegisterContactNotification(contact.getSite().toMO(), contact.toMO().addEngine("email"), url) 
+                                                new RegisterContactNotification(contact.getSite().toMOUnsafe(), contact.toMOUnsafe().addEngine("email"), url) 
                                         );
                                     }
                                     catch (Exception e)
@@ -420,7 +439,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring command " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadCommand(configuration, db);
                 }
@@ -448,23 +467,26 @@ public class BergamotConfigImporter
             return;
         }
         // load
+        CommandCfg resolvedConfiguration = configuration.resolve();
         Command command = db.getCommandByName(this.site.getId(), configuration.getName());
         if(command == null)
         {
             configuration.setId(this.site.randomObjectId());
             command = new Command();
-            this.report.info("Configuring new command: " + configuration.resolve().getName());
+            this.report.info("Configuring new command: " + resolvedConfiguration.getName());
         }
         else
         {
             configuration.setId(command.getId());
-            this.report.info("Reconfiguring existing command: " + configuration.resolve().getName() + " (" + configuration.getId() + ")");
+            this.report.info("Reconfiguring existing command: " + resolvedConfiguration.getName() + " (" + configuration.getId() + ")");
         }
         // apply the new config
         command.configure(configuration);
         // update
         db.setCommand(command);
         this.loadedObjects.add("command:" + configuration.getName());
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, command, db);
     }
 
     private void loadLocations(BergamotDB db)
@@ -507,7 +529,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring location " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadLocation(configuration, db);
                     this.linkLocation(configuration, db);
@@ -536,29 +558,24 @@ public class BergamotConfigImporter
             return;
         }
         // load
+        LocationCfg resolvedConfiguration = configuration.resolve();
         Location location = db.getLocationByName(this.site.getId(), configuration.getName());
         if (location == null)
         {
             configuration.setId(this.site.randomObjectId());
             location = new Location();
-            this.report.info("Configuring new location: " + configuration.resolve().getName());
+            this.report.info("Configuring new location: " + resolvedConfiguration.getName());
         }
         else
         {
             configuration.setId(location.getId());
-            this.report.info("Reconfiguring existing location: " + configuration.resolve().getName() + " (" + configuration.getId() + ")");
+            this.report.info("Reconfiguring existing location: " + resolvedConfiguration.getName() + " (" + configuration.getId() + ")");
         }
         location.configure(configuration);
         db.setLocation(location);
         this.loadedObjects.add("location:" + configuration.getName());
-        // set security domain membership
-        db.removeSecurityDomainMembershipForCheck(location.getId());
-        for (String securityDomainName : configuration.resolve().getSecurityDomains())
-        {
-            SecurityDomain domain = db.getSecurityDomainByName(this.site.getId(), securityDomainName);
-            if (domain != null)
-                db.addCheckToSecurityDomain(domain.getId(), location.getId());
-        }
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, location, db);
     }
     
     private void linkLocation(LocationCfg configuration, BergamotDB db)
@@ -616,7 +633,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring group " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadGroup(configuration, db);
                     this.linkGroup(configuration, db);
@@ -644,30 +661,25 @@ public class BergamotConfigImporter
             this.report.info("Skipping reconfiguring group " + configuration.getName());
             return;
         }
+        GroupCfg resolvedConfiguration = configuration.resolve();
         // load
         Group group = db.getGroupByName(this.site.getId(), configuration.getName());
         if (group == null)
         {
             configuration.setId(this.site.randomObjectId());
             group = new Group();
-            this.report.info("Configuring new group: " + configuration.resolve().getName());
+            this.report.info("Configuring new group: " + resolvedConfiguration.getName());
         }
         else
         {
             configuration.setId(group.getId());
-            this.report.info("Reconfiguring existing group: " + configuration.resolve().getName() + " (" + configuration.getId() + ")");
+            this.report.info("Reconfiguring existing group: " + resolvedConfiguration.getName() + " (" + configuration.getId() + ")");
         }
         group.configure(configuration);
         db.setGroup(group);
         this.loadedObjects.add("group:" + configuration.getName());
-        // set security domain membership
-        db.removeSecurityDomainMembershipForCheck(group.getId());
-        for (String securityDomainName : configuration.resolve().getSecurityDomains())
-        {
-            SecurityDomain domain = db.getSecurityDomainByName(this.site.getId(), securityDomainName);
-            if (domain != null)
-                db.addCheckToSecurityDomain(domain.getId(), group.getId());
-        }
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, group, db);
     }
     
     private void linkGroup(GroupCfg configuration, BergamotDB db)
@@ -724,7 +736,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring time period " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadTimePeriod(configuration, db);
                     this.linkTimePeriod(configuration, db);
@@ -752,21 +764,24 @@ public class BergamotConfigImporter
             return;
         }
         // load
+        TimePeriodCfg resolvedConfiguration = configuration.resolve();
         TimePeriod timePeriod = db.getTimePeriodByName(this.site.getId(), configuration.getName());
         if (timePeriod == null)
         {
             configuration.setId(this.site.randomObjectId());
             timePeriod = new TimePeriod();
-            this.report.info("Configuring new timeperiod: " + configuration.resolve().getName());
+            this.report.info("Configuring new timeperiod: " + resolvedConfiguration.getName());
         }
         else
         {
             configuration.setId(timePeriod.getId());
-            this.report.info("Reconfiguring existing timeperiod: " + configuration.resolve().getName() + " (" + configuration.getId() + ")");
+            this.report.info("Reconfiguring existing timeperiod: " + resolvedConfiguration.getName() + " (" + configuration.getId() + ")");
         }
         timePeriod.configure(configuration);
         db.setTimePeriod(timePeriod);
         this.loadedObjects.add("timeperiod:" + configuration.getName());
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, timePeriod, db);
     }
     
     private void linkTimePeriod(TimePeriodCfg configuration, BergamotDB db)
@@ -823,7 +838,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring team " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadTeam(configuration, db);
                     this.linkTeam(configuration, db);
@@ -851,21 +866,28 @@ public class BergamotConfigImporter
             return;
         }
         // load
+        TeamCfg resolvedConfiguration = configuration.resolve();
         Team team = db.getTeamByName(this.site.getId(), configuration.getName());
         if (team == null)
         {
             configuration.setId(this.site.randomObjectId());
             team = new Team();
-            this.report.info("Configuring new team: " + configuration.resolve().getName());
+            this.report.info("Configuring new team: " + resolvedConfiguration.getName());
         }
         else
         {
             configuration.setId(team.getId());
-            this.report.info("Reconfiguring existing team: " + configuration.resolve().getName() + " (" + configuration.getId() + ")");
+            this.report.info("Reconfiguring existing team: " + resolvedConfiguration.getName() + " (" + configuration.getId() + ")");
         }
         team.configure(configuration);
+        // access controls
+        this.loadAccessControls(team.getId(), configuration.resolve().getAccessControls(), db);
         db.setTeam(team);
         this.loadedObjects.add("team:" + configuration.getName());
+        // we need to rebuild the permissions
+        this.rebuildPermissions = true;
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, team, db);
     }
     
     private void linkTeam(TeamCfg configuration, BergamotDB db)
@@ -911,7 +933,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring contact " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadContact(configuration, db);
                 }
@@ -971,6 +993,8 @@ public class BergamotConfigImporter
         contact.configure(configuration);
         // notifications
         this.loadNotifications(contact.getId(), resolvedConfiguration.getNotifications(), db);
+        // access controls
+        this.loadAccessControls(contact.getId(), resolvedConfiguration.getAccessControls(), db);
         // store
         db.setContact(contact);
         this.loadedObjects.add("contact:" + configuration.getName());
@@ -982,6 +1006,22 @@ public class BergamotConfigImporter
             {
                 this.report.info("Adding contact " + contact.getName() + " to team " + team.getName());
                 team.addContact(contact);
+            }
+        }
+        // we need to rebuild the permissions
+        this.rebuildPermissions = true;
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, contact, db);
+    }
+    
+    private void loadAccessControls(UUID roleId, List<AccessControlCfg> acl, BergamotDB db)
+    {
+        for (AccessControlCfg cfg : acl)
+        {
+            SecurityDomain domain = db.getSecurityDomainByName(this.site.getId(), cfg.getSecurityDomain());
+            if (domain != null)
+            {
+                db.setAccessControl(new AccessControl(domain.getId(), roleId, new LinkedList<String>(cfg.getGrantedPermissions()), new LinkedList<String>(cfg.getRevokedPermissions())));
             }
         }
     }
@@ -1059,7 +1099,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring host " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadHost(configuration, db);
                 }
@@ -1308,14 +1348,8 @@ public class BergamotConfigImporter
                 db.invalidateChecksInGroup(group.getId());
             }
         }
-        // set security domain membership
-        db.removeSecurityDomainMembershipForCheck(check.getId());
-        for (String securityDomainName : resolvedConfiguration.getSecurityDomains())
-        {
-            SecurityDomain domain = db.getSecurityDomainByName(this.site.getId(), securityDomainName);
-            if (domain != null)
-                db.addCheckToSecurityDomain(domain.getId(), check.getId());
-        }
+        // security domains
+        this.linkSecurityDomains(resolvedConfiguration, check, db);
     }
     
     private void removeService(Host host, ServiceCfg configuration, BergamotDB db)
@@ -1456,7 +1490,7 @@ public class BergamotConfigImporter
                 {
                     this.report.info("Reconfiguring cluster " + configuration.getName() + " due to a change to the " + change.template.getName() + " inherited template.");
                     // first we need to resolve the inheritance for the cascaded object
-                    db.getConfigResolver(this.site.getId()).resolveInherit(configuration);
+                    db.getConfigResolver(this.site.getId()).computeInheritenance(configuration);
                     // load
                     this.loadCluster(configuration, db);
                 }
@@ -1576,6 +1610,20 @@ public class BergamotConfigImporter
         this.loadVirtualCheck(resource, resolvedConfiguration, db);
         // add
         db.setResource(resource);
+    }
+    
+    protected void linkSecurityDomains(SecuredObjectCfg<?> resolvedConfiguration, SecuredObject<?,?> object, BergamotDB db)
+    {
+        // set security domain membership
+        db.removeSecurityDomainMembershipForCheck(object.getId());
+        for (String securityDomainName : resolvedConfiguration.getSecurityDomains())
+        {
+            SecurityDomain domain = db.getSecurityDomainByName(this.site.getId(), securityDomainName);
+            if (domain != null)
+                db.addCheckToSecurityDomain(domain.getId(), object.getId());
+        }
+        // ensure we flush cached permissions
+        this.clearPermissionsCache = true;
     }
     
     /**

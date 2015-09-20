@@ -1,0 +1,56 @@
+<!DOCTYPE balsa SYSTEM "http://balsa.intrbiz.net/balsa.dtd">
+<?RenderLibrary com.intrbiz.balsa?>
+<!-- The index view -->
+<fragment xmlns="com.intrbiz.balsa" title="Add Group">
+
+	<div class="row">
+		<form id="create_group" name="create_group" method="post" action="#{path('/group/create')}">
+			<div rendered="#{! templates.isEmpty()}">
+				<label for="group_extends">Template</label>
+				<select id="group_extends" name="group_extends">
+					<option value="" selected="selected">Please select a template</option>
+					<data-set var="template" value="#{templates}">
+						<option value="#{template.id}">#{coalesce(template.summary, template.name)}</option>
+					</data-set>
+				</select>
+			</div>
+			<div>
+				<label for="group_summary">Summary</label>
+				<input type="text" id="group_summary" name="group_summary"/>
+			</div>
+			<div>
+				<label for="group_name">Name</label>
+				<input type="text" id="group_name" name="group_name"/>
+			</div>
+			<div>
+				<label for="group_group[0]">Groups</label>
+				<ul>
+					<li>
+						<select id="group_group_0" name="group_group[0]" data-fieldcount="1">
+							<option value="" selected="selected">No group</option>
+							<data-set var="group" value="#{groups}">
+								<option value="#{group.id}">#{coalesce(group.summary, group.name)}</option>
+							</data-set>
+						</select>
+						<a href="#add_group" id="add_group" class="add">Another</a>
+					</li>
+				</ul>
+			</div>
+			<div>
+				<label for="group_description">Description</label>
+				<textarea id="group_description" name="group_description"></textarea>
+			</div>
+			<div>
+				<input type="submit" value="Add Group"/>
+			</div>
+		</form>
+	</div>
+	
+	<script>
+		$(document).ready(function() {
+			$('#group_summary').copyInputTo('#group_name');
+			$('#add_group').addAnotherField('group_group');
+		});
+	</script>
+
+</fragment>

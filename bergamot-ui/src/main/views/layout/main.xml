@@ -5,7 +5,6 @@
 	<head>
 		<title>Bergamot Monitoring - #{title()}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
-		<link href='#{balsa().request.requestScheme}://fonts.googleapis.com/css?family=Open+Sans:400,700|Merriweather+Sans:400,700' rel='stylesheet' type='text/css' />
 		<link rel="stylesheet" type="text/css" href="#{public('/css/v1.6.0/style.css')}" />
 		<link rel="stylesheet" type="text/css" href="#{public('/css/v1.6.0/plugins/reveal.css')}" />
 		<link rel="stylesheet" type="text/css" href="#{public('/css/v1.6.0/plugins/jquery.simple-dtpicker.css')}" />
@@ -14,6 +13,7 @@
     	<script src="#{public('/js/v1.5.0/bower_components/jquery/dist/jquery.js')}"></script>
     	<script src="#{public('/js/v1.5.0/plugins/jquery.reveal.js')}"></script>
     	<script src="#{public('/js/v1.5.0/plugins/jquery.simple-dtpicker.js')}"></script>
+    	<script src="#{public('/js/v1.5.0/plugins/bergamot-plugins.js')}"></script>
     	<script type="text/javascript">
             <![CDATA[
 			/* Configure require js */
@@ -72,7 +72,7 @@
 			/* setup common javascript components */
 			require(["bergamot/lib/util/console-log", "bergamot/lib/ui/web-notify", "bergamot/lib/data/api-driver"], function(bergamot_console_log, bergamot_ui_web_notify, bergamot_api_driver)
 			{
-				/* bergamot_console_log.attachTo(document); */
+			    if (#{Balsa().param('debug_js') != null}) bergamot_console_log.attachTo(document);
 			
 			    bergamot_ui_web_notify.attachTo(document, {
 			    	site_id: #{'"' + site.id + '"'}
