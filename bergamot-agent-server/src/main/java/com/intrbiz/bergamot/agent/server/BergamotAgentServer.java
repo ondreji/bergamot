@@ -1,19 +1,5 @@
 package com.intrbiz.bergamot.agent.server;
 
-import io.netty.bootstrap.ServerBootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioServerSocketChannel;
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.codec.http.HttpServerCodec;
-import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.timeout.ReadTimeoutHandler;
-import io.netty.handler.timeout.WriteTimeoutHandler;
-
 import java.io.FileReader;
 import java.security.KeyStore;
 import java.security.SecureRandom;
@@ -33,6 +19,7 @@ import org.apache.log4j.BasicConfigurator;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 
+import com.intrbiz.bergamot.agent.server.BergamotAgentServer.RegisterAgentCallback.SendAgentRegistrationMessage;
 import com.intrbiz.bergamot.agent.server.config.BergamotAgentServerCfg;
 import com.intrbiz.bergamot.crypto.util.KeyStoreUtil;
 import com.intrbiz.bergamot.crypto.util.TLSConstants;
@@ -47,8 +34,24 @@ import com.intrbiz.bergamot.model.message.agent.check.CheckProcess;
 import com.intrbiz.bergamot.model.message.agent.check.CheckUptime;
 import com.intrbiz.bergamot.model.message.agent.check.CheckWho;
 import com.intrbiz.bergamot.model.message.agent.check.ExecCheck;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationMessage;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationRequest;
 import com.intrbiz.bergamot.model.message.agent.util.Parameter;
 import com.intrbiz.configuration.Configurable;
+
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.http.HttpObjectAggregator;
+import io.netty.handler.codec.http.HttpServerCodec;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 
 public class BergamotAgentServer implements Runnable, Configurable<BergamotAgentServerCfg>
 {
@@ -67,6 +70,8 @@ public class BergamotAgentServer implements Runnable, Configurable<BergamotAgent
     private Consumer<BergamotAgentServerHandler> onAgentUnregister = null;
     
     private Consumer<BergamotAgentServerHandler> onAgentPing;
+    
+    private RegisterAgentCallback onRequestAgentRegistration;
     
     private SSLContext sslContext;
     
@@ -134,6 +139,13 @@ public class BergamotAgentServer implements Runnable, Configurable<BergamotAgent
         {
             throw new RuntimeException("Failed to init SSLEngine", e);
         }
+    }
+    
+    public void requestAgentRegistration(UUID templateId, AgentRegistrationRequest request, SendAgentRegistrationMessage callback) throws Exception
+    {
+        logger.info("Starting registration process of agent under template: " + templateId + " with request:\n" + request);
+        if (this.onRequestAgentRegistration != null)
+            this.onRequestAgentRegistration.register(templateId, request, callback);
     }
     
     public void registerAgent(BergamotAgentServerHandler agent)
@@ -212,6 +224,16 @@ public class BergamotAgentServer implements Runnable, Configurable<BergamotAgent
     public Consumer<BergamotAgentServerHandler> getOnAgentPing()
     {
         return this.onAgentPing;
+    }
+
+    public RegisterAgentCallback getOnRequestAgentRegistration()
+    {
+        return onRequestAgentRegistration;
+    }
+
+    public void setOnRequestAgentRegistration(RegisterAgentCallback onRequestAgentRegistration)
+    {
+        this.onRequestAgentRegistration = onRequestAgentRegistration;
     }
 
     public void run()
@@ -332,5 +354,15 @@ public class BergamotAgentServer implements Runnable, Configurable<BergamotAgent
         });
         // go go go
         server.start();
+    }
+    
+    public static interface RegisterAgentCallback
+    {
+        public static interface SendAgentRegistrationMessage
+        {
+            void send(AgentRegistrationMessage response);
+        }
+        
+        void register(UUID templateId, AgentRegistrationRequest request, SendAgentRegistrationMessage callback) throws Exception;
     }
 }

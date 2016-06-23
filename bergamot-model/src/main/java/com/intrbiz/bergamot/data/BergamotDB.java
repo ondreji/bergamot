@@ -7,6 +7,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Scanner;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import org.apache.log4j.Logger;
 
@@ -20,6 +22,8 @@ import com.intrbiz.bergamot.model.APIToken;
 import com.intrbiz.bergamot.model.AccessControl;
 import com.intrbiz.bergamot.model.AgentRegistration;
 import com.intrbiz.bergamot.model.Alert;
+import com.intrbiz.bergamot.model.AlertEncompasses;
+import com.intrbiz.bergamot.model.AlertEscalation;
 import com.intrbiz.bergamot.model.Check;
 import com.intrbiz.bergamot.model.CheckCommand;
 import com.intrbiz.bergamot.model.Cluster;
@@ -31,6 +35,7 @@ import com.intrbiz.bergamot.model.Config;
 import com.intrbiz.bergamot.model.ConfigChange;
 import com.intrbiz.bergamot.model.Contact;
 import com.intrbiz.bergamot.model.Downtime;
+import com.intrbiz.bergamot.model.Escalation;
 import com.intrbiz.bergamot.model.Group;
 import com.intrbiz.bergamot.model.Host;
 import com.intrbiz.bergamot.model.Location;
@@ -50,7 +55,7 @@ import com.intrbiz.bergamot.model.state.CheckState;
 import com.intrbiz.bergamot.model.state.CheckStats;
 import com.intrbiz.bergamot.model.state.CheckTransition;
 import com.intrbiz.bergamot.model.state.GroupState;
-import com.intrbiz.bergamot.virtual.VirtualCheckExpressionParserContext;
+import com.intrbiz.bergamot.virtual.VirtualCheckExpressionContext;
 import com.intrbiz.configuration.Configuration;
 import com.intrbiz.data.DataManager;
 import com.intrbiz.data.cache.Cache;
@@ -77,7 +82,7 @@ import com.intrbiz.gerald.witchcraft.Witchcraft;
 
 @SQLSchema(
         name = "bergamot", 
-        version = @SQLVersion({3, 20, 0}),
+        version = @SQLVersion({3, 37, 0}),
         tables = {
             Site.class,
             Location.class,
@@ -110,7 +115,10 @@ import com.intrbiz.gerald.witchcraft.Witchcraft;
             SecurityDomainMembership.class,
             AccessControl.class,
             ComputedPermission.class,
-            ComputedPermissionForDomain.class
+            ComputedPermissionForDomain.class,
+            Escalation.class,
+            AlertEscalation.class,
+            AlertEncompasses.class
         }
 )
 public abstract class BergamotDB extends DatabaseAdapter
@@ -260,17 +268,30 @@ public abstract class BergamotDB extends DatabaseAdapter
     )
     public abstract List<Config> listAllDependentConfigObjects(@SQLParam("site_id") UUID siteId, @SQLParam(value = "qualified_template_name", virtual = true) String qualifiedTemplateName);
     
-        
+    protected final Timer objectLocatorLookupTimer = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.object_locator.lookup"));
     
     public BergamotObjectLocator getObjectLocator(final UUID siteId)
     {
         return new BergamotObjectLocator()
         {
+            private ConcurrentMap<String, TemplatedObjectCfg<?>> localConfigCache = new ConcurrentHashMap<String, TemplatedObjectCfg<?>>();
+            
             @Override
             @SuppressWarnings("unchecked")
             public <T extends TemplatedObjectCfg<T>> T lookup(Class<T> type, String name)
             {
-                return (T) Util.nullable(BergamotDB.this.getConfigByName(siteId, Configuration.getRootElement(type), name), Config::getConfiguration);
+                try (Timer.Context tctx = objectLocatorLookupTimer.time())
+                {
+                    // try our local cache first
+                    String key = type.getSimpleName() + "::" + name;
+                    T cfg = (T) this.localConfigCache.get(key);                    
+                    if (cfg == null)
+                    {
+                        cfg = (T) Util.nullable(BergamotDB.this.getConfigByName(siteId, Configuration.getRootElement(type), name), Config::getConfiguration);
+                        if (cfg != null) this.localConfigCache.putIfAbsent(key, cfg);
+                    }
+                    return cfg;
+                }
             }
         };
     }
@@ -293,6 +314,16 @@ public abstract class BergamotDB extends DatabaseAdapter
             orderBy = { @SQLOrder(value = "applied", direction = Direction.ASC), @SQLOrder(value = "created", direction = Direction.DESC) }
     )
     public abstract List<ConfigChange> listConfigChanges(@SQLParam("site_id") UUID siteId);
+    
+    @SQLGetter(table = ConfigChange.class, name = "page_all_config_changes", since = @SQLVersion({3, 33, 0}), 
+            orderBy = { @SQLOrder(value = "applied", direction = Direction.ASC), @SQLOrder(value = "created", direction = Direction.DESC) }
+    )
+    public abstract List<ConfigChange> pageAllConfigChanges(@SQLParam("site_id") UUID siteId, @SQLLimit long limit, @SQLOffset long offset);
+    
+    @SQLGetter(table = ConfigChange.class, name = "page_config_changes", since = @SQLVersion({3, 33, 0}), 
+            orderBy = { @SQLOrder(value = "applied", direction = Direction.ASC), @SQLOrder(value = "created", direction = Direction.DESC) }
+    )
+    public abstract List<ConfigChange> pageConfigChanges(@SQLParam("site_id") UUID siteId, @SQLParam("applied") boolean applied, @SQLLimit long limit, @SQLOffset long offset);
     
     @SQLGetter(table = ConfigChange.class, name = "list_pending_config_changes", since = @SQLVersion({1, 0, 0}),
             query = @SQLQuery("SELECT * FROM bergamot.config_change WHERE site_id = p_site_id AND applied = FALSE"),
@@ -747,6 +778,36 @@ public abstract class BergamotDB extends DatabaseAdapter
     @SQLRemove(table = NotificationEngine.class, name = "remove_notification_engine", since = @SQLVersion({1, 0, 0}))
     public abstract void removeNotificationEngine(@SQLParam("notifications_id") UUID notificationId, @SQLParam("engine") String engine);
     
+    @Cacheable
+    @CacheInvalidate({"get_notification_engines.#{notifications_id}"})
+    @SQLRemove(table = NotificationEngine.class, name = "remove_notification_engines", since = @SQLVersion({3, 22, 0}))
+    public abstract void removeNotificationEngines(@SQLParam("notifications_id") UUID notificationId);
+    
+    // escalations
+    
+    @Cacheable
+    @CacheInvalidate({"get_escalations.#{notifications_id}"})
+    @SQLSetter(table = Escalation.class, name = "set_escalation", since = @SQLVersion({3, 22, 0}))
+    public abstract void setEscalation(Escalation escalation);
+    
+    @Cacheable
+    @SQLGetter(table = Escalation.class, name = "get_escalation", since = @SQLVersion({3, 22, 0}))
+    public abstract Escalation getEscalation(@SQLParam("notifications_id") UUID notificationId, @SQLParam("after") long after);
+    
+    @Cacheable
+    @SQLGetter(table = Escalation.class, name = "get_escalations", since = @SQLVersion({3, 22, 0}), orderBy = @SQLOrder(value = "after", direction = Direction.DESC))
+    public abstract List<Escalation> getEscalations(@SQLParam("notifications_id") UUID notificationId);
+    
+    @Cacheable
+    @CacheInvalidate({"get_escalations.#{notifications_id}"})
+    @SQLRemove(table = Escalation.class, name = "remove_escalation", since = @SQLVersion({3, 22, 0}))
+    public abstract void removeEscalation(@SQLParam("notifications_id") UUID notificationId, @SQLParam("after") long after);
+    
+    @Cacheable
+    @CacheInvalidate({"get_escalations.#{notifications_id}"})
+    @SQLRemove(table = Escalation.class, name = "remove_escalations", since = @SQLVersion({3, 22, 0}))
+    public abstract void removeEscalations(@SQLParam("notifications_id") UUID notificationId);
+    
     // state
     
     @Cacheable
@@ -843,6 +904,54 @@ public abstract class BergamotDB extends DatabaseAdapter
     )
     public abstract List<Alert> listAlerts(@SQLParam("site_id") UUID siteId);
     
+    // alert escalations
+    
+    // escalations
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_escalations.#{alert_id}"})
+    @SQLSetter(table = AlertEscalation.class, name = "set_alert_escalation", since = @SQLVersion({3, 26, 0}))
+    public abstract void setAlertEscalation(AlertEscalation alertEscalation);
+    
+    @Cacheable
+    @SQLGetter(table = AlertEscalation.class, name = "get_alert_escalation", since = @SQLVersion({3, 26, 0}))
+    public abstract AlertEscalation getAlertEscalation(@SQLParam("alert_id") UUID alertId, @SQLParam("after") long after);
+    
+    @Cacheable
+    @SQLGetter(table = AlertEscalation.class, name = "get_alert_escalations", since = @SQLVersion({3, 26, 0}), orderBy = @SQLOrder(value = "after", direction = Direction.ASC))
+    public abstract List<AlertEscalation> getAlertEscalations(@SQLParam("alert_id") UUID alertId);
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_escalations.#{alert_id}"})
+    @SQLRemove(table = AlertEscalation.class, name = "remove_alert_escalation", since = @SQLVersion({3, 26, 0}))
+    public abstract void removeAlertEscalation(@SQLParam("alert_id") UUID alertId, @SQLParam("after") long after);
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_escalations.#{alert_id}"})
+    @SQLRemove(table = AlertEscalation.class, name = "remove_alert_escalations", since = @SQLVersion({3, 26, 0}))
+    public abstract void removeAlertEscalations(@SQLParam("alert_id") UUID alertId);
+    
+    // encompasses
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_encompasses.#{alert_id}"})
+    @SQLSetter(table = AlertEncompasses.class, name = "set_alert_encompasses", since = @SQLVersion({3, 30, 0}))
+    public abstract void setAlertEncompasses(AlertEncompasses alertEncompasses);
+    
+    @Cacheable
+    @SQLGetter(table = AlertEncompasses.class, name = "get_alert_encompasses", since = @SQLVersion({3, 30, 0}), orderBy = @SQLOrder(value = "raised", direction = Direction.DESC))
+    public abstract List<AlertEncompasses> getAlertEncompasses(@SQLParam("alert_id") UUID alertId);
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_encompasses.#{alert_id}"})
+    @SQLRemove(table = AlertEncompasses.class, name = "remove_an_alert_encompasses", since = @SQLVersion({3, 30, 0}))
+    public abstract void removeAnAlertEncompasses(@SQLParam("alert_id") UUID alertId, @SQLParam("check_id") UUID checkId);
+    
+    @Cacheable
+    @CacheInvalidate({"get_alert_encompasses.#{alert_id}"})
+    @SQLRemove(table = AlertEncompasses.class, name = "remove_alert_encompasses", since = @SQLVersion({3, 30, 0}))
+    public abstract void removeAlertEncompasses(@SQLParam("alert_id") UUID alertId);
+    
     // group state
     
     /**
@@ -853,45 +962,49 @@ public abstract class BergamotDB extends DatabaseAdapter
      * @return
      */
     @SQLGetter(table = GroupState.class, name = "compute_group_state", since = @SQLVersion({1, 0, 0}),
-            query = @SQLQuery("WITH RECURSIVE group_graph(id) AS ( " +
-                              "    SELECT g.id " +
-                              "    FROM bergamot.group g " +
-                              "    WHERE g.id = p_group_id " +
-                              "  UNION " +
-                              "    SELECT g.id " +
-                              "    FROM bergamot.group g, group_graph gg " +
-                              "    WHERE g.group_ids @> ARRAY[gg.id] " +
-                              ") " +
-                              "SELECT " + 
-                              "  p_group_id, " +
-                              "  bool_and(s.ok OR s.suppressed OR s.in_downtime) AS ok, " +
-                              "  max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER AS status, " +
-                              "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count, " +  
-                              "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, " +
-                              "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, " +
-                              "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, " +
-                              "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, " +
-                              "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, " +
-                              "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, " +
-                              "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, " + 
-                              "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, " +
-                              "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, " +
-                              "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count, " +  
-                              "  count(s.check_id)::INTEGER                                                                          AS total_checks, " +
-                              "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count " +
-                              "FROM bergamot.check_state s " +
-                              "JOIN ( " +
-                              "    SELECT id, group_ids FROM bergamot.host " +
-                              "  UNION " + 
-                              "    SELECT id, group_ids FROM bergamot.service " +
-                              "  UNION  " +
-                              "    SELECT id, group_ids FROM bergamot.trap " +
-                              "  UNION " +
-                              "    SELECT id, group_ids FROM bergamot.cluster " +
-                              "  UNION " +
-                              "    SELECT id, group_ids FROM bergamot.resource " +
-                              ") q ON (s.check_id = q.id) " +
-                              "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])")
+        query = @SQLQuery(
+            "WITH RECURSIVE group_graph(id) AS ( \n" +
+            "    SELECT g.id \n" +
+            "    FROM bergamot.group g \n" +
+            "    WHERE g.id = p_group_id \n" +
+            "  UNION \n" +
+            "    SELECT g.id \n" +
+            "    FROM bergamot.group g, group_graph gg \n" +
+            "    WHERE g.group_ids @> ARRAY[gg.id] \n" +
+            ") \n" +
+            "SELECT  \n" +
+            "  p_group_id, \n" +
+            "  bool_and(s.ok OR s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) AS ok, \n" +
+            "  max(CASE WHEN s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed THEN 0 ELSE s.status END)::INTEGER AS status, \n" +
+            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS pending_count,\n" +
+            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS ok_count,\n" +
+            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS warning_count,\n" +
+            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS critical_count,\n" +
+            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS unknown_count,\n" +
+            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS timeout_count,\n" +
+            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS error_count,\n" +
+            "  count(CASE WHEN s.suppressed                                                                            THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,\n" +
+            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS info_count,\n" +
+            "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS action_count,\n" +
+            "  count(CASE WHEN s.in_downtime                                                                           THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,\n" +
+            "  count(s.check_id)::INTEGER                                                                                                             AS total_checks, \n" +
+            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count,\n" +
+            "  count(CASE WHEN s.acknowledged                                                                          THEN 1 ELSE NULL END)::INTEGER AS acknowledged_count,\n" +
+            "  count(CASE WHEN s.encompassed                                                                           THEN 1 ELSE NULL END)::INTEGER AS encompassed_count\n" +
+            "FROM bergamot.check_state s \n" +
+            "JOIN ( \n" +
+            "    SELECT id, group_ids FROM bergamot.host \n" +
+            "  UNION  \n" +
+            "    SELECT id, group_ids FROM bergamot.service \n" +
+            "  UNION  \n" +
+            "    SELECT id, group_ids FROM bergamot.trap \n" +
+            "  UNION \n" +
+            "    SELECT id, group_ids FROM bergamot.cluster \n" +
+            "  UNION \n" +
+            "    SELECT id, group_ids FROM bergamot.resource \n" +
+            ") q ON (s.check_id = q.id) \n" +
+            "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])\n"
+        )
     )
     public abstract GroupState computeGroupState(@SQLParam(value = "group_id", virtual = true) UUID groupId);
     
@@ -904,72 +1017,74 @@ public abstract class BergamotDB extends DatabaseAdapter
      */
     @SQLGetter(table = GroupState.class, name = "compute_group_state_for_contact", since = @SQLVersion({3, 11, 0}),
         query = @SQLQuery(
-                "WITH RECURSIVE group_graph(id) AS (  \n" +
-                "    SELECT g.id  \n" +
-                "    FROM bergamot.group g \n" +
-                "    LEFT JOIN \n" +
-                "    ( \n" +
-                "      SELECT sdm1.check_id, coalesce(bool_or(cpfd1.allowed), false) as allowed \n" +
-                "      FROM bergamot.security_domain_membership sdm1 \n" +
-                "      JOIN bergamot.computed_permissions_for_domain cpfd1 ON (sdm1.security_domain_id = cpfd1.security_domain_id) \n" +
-                "      WHERE cpfd1.permission = 'read' AND cpfd1.contact_id = p_contact_id \n" +
-                "      GROUP BY sdm1.check_id \n" +
-                "    ) q1 ON (q1.check_id = g.id) \n" +
-                "    WHERE g.id = p_group_id AND (coalesce(q1.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
-                "  UNION  \n" +
-                "    SELECT g.id  \n" +
-                "    FROM bergamot.group g\n" +
-                "    LEFT JOIN \n" +
-                "    ( \n" +
-                "      SELECT sdm2.check_id, coalesce(bool_or(cpfd2.allowed), false) as allowed \n" +
-                "      FROM bergamot.security_domain_membership sdm2 \n" +
-                "      JOIN bergamot.computed_permissions_for_domain cpfd2 ON (sdm2.security_domain_id = cpfd2.security_domain_id) \n" +
-                "      WHERE cpfd2.permission = 'read' AND cpfd2.contact_id = p_contact_id \n" +
-                "      GROUP BY sdm2.check_id \n" +
-                "    ) q2 ON (q2.check_id = g.id), \n" +
-                "    group_graph gg  \n" +
-                "    WHERE g.group_ids @> ARRAY[gg.id] AND (coalesce(q2.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
-                ")  \n" +
-                "SELECT   \n" +
-                "  p_group_id,  \n" +
-                "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime), true) AS ok,  \n" +
-                "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER, 0) AS status,  \n" +
-                "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count,    \n" +
-                "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count,  \n" +
-                "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count,  \n" +
-                "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count,  \n" +
-                "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count,  \n" +
-                "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count,  \n" +
-                "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count,  \n" +
-                "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,   \n" +
-                "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count,  \n" +
-                "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count,  \n" +
-                "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,    \n" +
-                "  count(s.check_id)::INTEGER                                                                          AS total_checks,  \n" +
-                "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count " +
-                "FROM\n" +
-                " bergamot.check_state s  \n" +
-                " JOIN (  \n" +
-                "    SELECT id, group_ids FROM bergamot.host  \n" +
-                "  UNION   \n" +
-                "    SELECT id, group_ids FROM bergamot.service    \n" +
-                "  UNION   \n" +
-                "    SELECT id, group_ids FROM bergamot.trap  \n" +
-                "  UNION  \n" +
-                "    SELECT id, group_ids FROM bergamot.cluster  \n" +
-                "  UNION  \n" +
-                "    SELECT id, group_ids FROM bergamot.resource  \n" +
-                " ) q ON (s.check_id = q.id)\n" +
-                "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])\n" +
-                "LEFT JOIN \n" +
-                "( \n" +
-                "  SELECT sdm3.check_id, coalesce(bool_or(cpfd3.allowed), false) as allowed \n" +
-                "  FROM bergamot.security_domain_membership sdm3 \n" +
-                "  JOIN bergamot.computed_permissions_for_domain cpfd3 ON (sdm3.security_domain_id = cpfd3.security_domain_id) \n" +
-                "  WHERE cpfd3.permission = 'read' AND cpfd3.contact_id = p_contact_id \n" +
-                "  GROUP BY sdm3.check_id \n" +
-                ") q3 ON (q3.check_id = s.check_id) \n" +
-                "WHERE coalesce(q3.allowed, false) OR bergamot.has_permission(p_contact_id, 'read')\n"
+            "WITH RECURSIVE group_graph(id) AS (  \n" +
+            "    SELECT g.id  \n" +
+            "    FROM bergamot.group g \n" +
+            "    LEFT JOIN \n" +
+            "    ( \n" +
+            "      SELECT sdm1.check_id, coalesce(bool_or(cpfd1.allowed), false) as allowed \n" +
+            "      FROM bergamot.security_domain_membership sdm1 \n" +
+            "      JOIN bergamot.computed_permissions_for_domain cpfd1 ON (sdm1.security_domain_id = cpfd1.security_domain_id) \n" +
+            "      WHERE cpfd1.permission = 'read' AND cpfd1.contact_id = p_contact_id \n" +
+            "      GROUP BY sdm1.check_id \n" +
+            "    ) q1 ON (q1.check_id = g.id) \n" +
+            "    WHERE g.id = p_group_id AND (coalesce(q1.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+            "  UNION  \n" +
+            "    SELECT g.id  \n" +
+            "    FROM bergamot.group g\n" +
+            "    LEFT JOIN \n" +
+            "    ( \n" +
+            "      SELECT sdm2.check_id, coalesce(bool_or(cpfd2.allowed), false) as allowed \n" +
+            "      FROM bergamot.security_domain_membership sdm2 \n" +
+            "      JOIN bergamot.computed_permissions_for_domain cpfd2 ON (sdm2.security_domain_id = cpfd2.security_domain_id) \n" +
+            "      WHERE cpfd2.permission = 'read' AND cpfd2.contact_id = p_contact_id \n" +
+            "      GROUP BY sdm2.check_id \n" +
+            "    ) q2 ON (q2.check_id = g.id), \n" +
+            "    group_graph gg  \n" +
+            "    WHERE g.group_ids @> ARRAY[gg.id] AND (coalesce(q2.allowed, false) OR bergamot.has_permission(p_contact_id, 'read'))\n" +
+            ")  \n" +
+            "SELECT   \n" +
+            "  p_group_id,  \n" +
+            "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed), true) AS ok,  \n" +
+            "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed THEN 0 ELSE s.status END)::INTEGER, 0) AS status,  \n" +
+            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS pending_count,\n" +
+            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS ok_count,\n" +
+            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS warning_count,\n" +
+            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS critical_count,\n" +
+            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS unknown_count,\n" +
+            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS timeout_count,\n" +
+            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS error_count,\n" +
+            "  count(CASE WHEN s.suppressed                                                                            THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,\n" +
+            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS info_count,\n" +
+            "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS action_count,\n" +
+            "  count(CASE WHEN s.in_downtime                                                                           THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,\n" +
+            "  count(s.check_id)::INTEGER                                                                                                             AS total_checks,\n" +
+            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count,\n" +
+            "  count(CASE WHEN s.acknowledged                                                                          THEN 1 ELSE NULL END)::INTEGER AS acknowledged_count,\n" +
+            "  count(CASE WHEN s.encompassed                                                                           THEN 1 ELSE NULL END)::INTEGER AS encompassed_count\n" +
+            "FROM\n" +
+            " bergamot.check_state s  \n" +
+            " JOIN (  \n" +
+            "    SELECT id, group_ids FROM bergamot.host  \n" +
+            "  UNION   \n" +
+            "    SELECT id, group_ids FROM bergamot.service    \n" +
+            "  UNION   \n" +
+            "    SELECT id, group_ids FROM bergamot.trap  \n" +
+            "  UNION  \n" +
+            "    SELECT id, group_ids FROM bergamot.cluster  \n" +
+            "  UNION  \n" +
+            "    SELECT id, group_ids FROM bergamot.resource  \n" +
+            " ) q ON (s.check_id = q.id)\n" +
+            "JOIN group_graph g ON (q.group_ids @> ARRAY[g.id])\n" +
+            "LEFT JOIN \n" +
+            "( \n" +
+            "  SELECT sdm3.check_id, coalesce(bool_or(cpfd3.allowed), false) as allowed \n" +
+            "  FROM bergamot.security_domain_membership sdm3 \n" +
+            "  JOIN bergamot.computed_permissions_for_domain cpfd3 ON (sdm3.security_domain_id = cpfd3.security_domain_id) \n" +
+            "  WHERE cpfd3.permission = 'read' AND cpfd3.contact_id = p_contact_id \n" +
+            "  GROUP BY sdm3.check_id \n" +
+            ") q3 ON (q3.check_id = s.check_id) \n" +
+            "WHERE coalesce(q3.allowed, false) OR bergamot.has_permission(p_contact_id, 'read')\n"
         )
     )
     public abstract GroupState computeGroupStateForContact(@SQLParam(value = "group_id", virtual = true) UUID groupId, @SQLParam(value = "contact_id", virtual = true) UUID contactId);
@@ -982,35 +1097,39 @@ public abstract class BergamotDB extends DatabaseAdapter
      * @return
      */
     @SQLGetter(table = GroupState.class, name = "compute_location_state", since = @SQLVersion({1, 0, 0}),
-            query = @SQLQuery("WITH RECURSIVE location_graph(id) AS ( "+
-                              "    SELECT l.id "+
-                              "    FROM bergamot.location l "+
-                              "    WHERE l.id = p_location_id "+
-                              "  UNION "+
-                              "    SELECT l.id "+
-                              "    FROM bergamot.location l, location_graph lg "+
-                              "    WHERE l.location_id = lg.id "+
-                              ") "+
-                              "SELECT "+ 
-                              "  p_location_id, "+
-                              "  bool_and(s.ok OR s.suppressed OR s.in_downtime) AS ok, " +
-                              "  max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER AS status, " +
-                              "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count, " +  
-                              "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, " +
-                              "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, " +
-                              "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, " +
-                              "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, " +
-                              "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, " +
-                              "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, " +
-                              "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count, " + 
-                              "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, " +
-                              "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, " +
-                              "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count, " +  
-                              "  count(s.check_id)::INTEGER                                                                          AS total_checks, " +
-                              "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count " +
-                              "FROM bergamot.check_state s " +
-                              "JOIN bergamot.host h ON (s.check_id = h.id) "+
-                              "JOIN location_graph lg ON (h.location_id = lg.id)")
+        query = @SQLQuery(
+            "WITH RECURSIVE location_graph(id) AS ( \n"+
+            "    SELECT l.id \n"+
+            "    FROM bergamot.location l \n"+
+            "    WHERE l.id = p_location_id \n"+
+            "  UNION \n"+
+            "    SELECT l.id \n"+
+            "    FROM bergamot.location l, location_graph lg \n"+
+            "    WHERE l.location_id = lg.id \n"+
+            ") \n"+
+            "SELECT \n"+ 
+            "  p_location_id,\n"+
+            "  bool_and(s.ok OR s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) AS ok,\n" +
+            "  max(CASE WHEN s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed THEN 0 ELSE s.status END)::INTEGER AS status,\n" +
+            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS pending_count,\n" +  
+            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS ok_count,\n" +
+            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS warning_count,\n" +
+            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS critical_count,\n" +
+            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS unknown_count,\n" +
+            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS timeout_count,\n" +
+            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS error_count,\n" +
+            "  count(CASE WHEN s.suppressed                                                                            THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,\n" + 
+            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS info_count,\n" +
+            "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS action_count,\n" +
+            "  count(CASE WHEN s.in_downtime                                                                           THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,\n" +  
+            "  count(s.check_id)::INTEGER                                                                                                             AS total_checks,\n" +
+            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count,\n" +
+            "  count(CASE WHEN s.acknowledged                                                                          THEN 1 ELSE NULL END)::INTEGER AS acknowledged_count,\n" +
+            "  count(CASE WHEN s.encompassed                                                                           THEN 1 ELSE NULL END)::INTEGER AS encompassed_count\n" +
+            "FROM bergamot.check_state s \n" +
+            "JOIN bergamot.host h ON (s.check_id = h.id) \n"+
+            "JOIN location_graph lg ON (h.location_id = lg.id)\n"
+        )
     )
     public abstract GroupState computeLocationState(@SQLParam(value = "location_id", virtual = true) UUID locationId);
     
@@ -1051,21 +1170,23 @@ public abstract class BergamotDB extends DatabaseAdapter
             ") \n" +
             "SELECT\n" +
             "  p_location_id,\n" +
-            "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime), true) AS ok, \n" +
-            "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime THEN 0 ELSE s.status END)::INTEGER, 0) AS status, \n" +
-            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS pending_count,   \n" +
-            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS ok_count, \n" +
-            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS warning_count, \n" +
-            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS critical_count, \n" +
-            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, \n" +
-            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, \n" +
-            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS error_count, \n" +
-            "  count(CASE WHEN s.suppressed                                         THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,  \n" +
-            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS info_count, \n" +
-            "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS action_count, \n" +
-            "  count(CASE WHEN s.in_downtime                                        THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,   \n" +
-            "  count(s.check_id)::INTEGER                                                                          AS total_checks,   \n" +
-            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count " +
+            "  coalesce(bool_and(s.ok OR s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed), true) AS ok, \n" +
+            "  coalesce(max(CASE WHEN s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed THEN 0 ELSE s.status END)::INTEGER, 0) AS status, \n" +
+            "  count(CASE WHEN s.status = 0 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS pending_count,   \n" +
+            "  count(CASE WHEN s.status = 2 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS ok_count, \n" +
+            "  count(CASE WHEN s.status = 3 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS warning_count, \n" +
+            "  count(CASE WHEN s.status = 4 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS critical_count, \n" +
+            "  count(CASE WHEN s.status = 5 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS unknown_count, \n" +
+            "  count(CASE WHEN s.status = 6 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS timeout_count, \n" +
+            "  count(CASE WHEN s.status = 7 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS error_count, \n" +
+            "  count(CASE WHEN s.suppressed                                                                            THEN 1 ELSE NULL END)::INTEGER AS suppressed_count,  \n" +
+            "  count(CASE WHEN s.status = 1 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS info_count, \n" +
+            "  count(CASE WHEN s.status = 9 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS action_count, \n" +
+            "  count(CASE WHEN s.in_downtime                                                                           THEN 1 ELSE NULL END)::INTEGER AS in_downtime_count,   \n" +
+            "  count(s.check_id)::INTEGER                                                                                                             AS total_checks,   \n" +
+            "  count(CASE WHEN s.status = 8 AND NOT (s.suppressed OR s.in_downtime OR s.acknowledged OR s.encompassed) THEN 1 ELSE NULL END)::INTEGER AS disconnected_count,\n" +
+            "  count(CASE WHEN s.acknowledged                                                                          THEN 1 ELSE NULL END)::INTEGER AS acknowledged_count,\n" +
+            "  count(CASE WHEN s.encompassed                                                                           THEN 1 ELSE NULL END)::INTEGER AS encompassed_count\n" +
             "FROM bergamot.check_state s \n" +
             "JOIN bergamot.host h ON (s.check_id = h.id)\n" +
             "JOIN location_graph lg ON (h.location_id = lg.id)\n" +
@@ -1738,10 +1859,16 @@ public abstract class BergamotDB extends DatabaseAdapter
     
     //
     
-    public VirtualCheckExpressionParserContext createVirtualCheckContext(final UUID siteId)
+    public VirtualCheckExpressionContext createVirtualCheckContext(final UUID siteId, final Host contextualHost)
     {      
-        return new VirtualCheckExpressionParserContext()
-        {            
+        return new VirtualCheckExpressionContext()
+        {
+            @Override
+            public Check<?, ?> lookupCheck(UUID id)
+            {
+                return getCheck(Site.setSiteId(siteId, id));
+            }
+
             @Override
             public Host lookupHost(String name)
             {
@@ -1751,7 +1878,7 @@ public abstract class BergamotDB extends DatabaseAdapter
             @Override
             public Host lookupHost(UUID id)
             {
-                return getHost(id);
+                return getHost(Site.setSiteId(siteId, id));
             }
 
             @Override
@@ -1763,44 +1890,56 @@ public abstract class BergamotDB extends DatabaseAdapter
             @Override
             public Cluster lookupCluster(UUID id)
             {
-                return getCluster(id);
+                return getCluster(Site.setSiteId(siteId, id));
             }
 
             @Override
             public Service lookupService(Host on, String name)
             {
-                return getServiceOnHost(on.getId(), name);
+                return getServiceOnHost(Site.setSiteId(siteId, on.getId()), name);
             }
 
             @Override
             public Service lookupService(UUID id)
             {
-                return getService(id);
+                return getService(Site.setSiteId(siteId, id));
             }
 
             @Override
             public Trap lookupTrap(Host on, String name)
             {
-                return getTrapOnHost(on.getId(), name);
+                return getTrapOnHost(Site.setSiteId(siteId, on.getId()), name);
             }
 
             @Override
             public Trap lookupTrap(UUID id)
             {
-                return getTrap(id);
+                return getTrap(Site.setSiteId(siteId, id));
             }
 
             @Override
             public Resource lookupResource(Cluster on, String name)
             {
-                return getResourceOnCluster(on.getId(), name);
+                return getResourceOnCluster(Site.setSiteId(siteId, on.getId()), name);
             }
 
             @Override
             public Resource lookupResource(UUID id)
             {
-                return getResource(id);
-            }           
+                return getResource(Site.setSiteId(siteId, id));
+            }
+
+            @Override
+            public Service lookupAnonymousService(String name)
+            {
+                return contextualHost == null ? null : contextualHost.getService(name);
+            }
+
+            @Override
+            public Trap lookupAnonymousTrap(String name)
+            {
+                return contextualHost == null ? null : contextualHost.getTrap(name);
+            }  
         };
     }
     
@@ -2065,7 +2204,101 @@ public abstract class BergamotDB extends DatabaseAdapter
                   stmt.setBoolean(2, suppressed);
                   try (ResultSet rs = stmt.executeQuery())
                   {
-                    if (rs.next()) return rs.getBoolean(1);
+                    if (rs.next())
+                    {
+                        this.getAdapterCache().remove("check_state." + checkId);
+                        return rs.getBoolean(1);
+                    }
+                  }
+                }
+                return false;
+        });
+    }
+    
+    private Timer set_current_alert = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.set_current_alert(UUID,UUID)"));
+    
+    /**
+     * Update the state of a check to record the current alert
+     * @param checkId the check id
+     * @param alertId the alert id
+     * @return true if the check state was updated
+     */
+    public boolean setCurrentAlert(UUID checkId, UUID alertId)
+    {
+        return this.useTimed(
+            set_current_alert, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.set_current_alert(?::UUID, ?::UUID)"))
+                {
+                  stmt.setObject(1, checkId);
+                  stmt.setObject(2, alertId);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next())
+                    {
+                        this.getAdapterCache().remove("check_state." + checkId);
+                        return rs.getBoolean(1);
+                    }
+                  }
+                }
+                return false;
+        });
+    }
+    
+    private Timer acknowledge_check = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.acknowledge_check(UUID,BOOLEAN)"));
+    
+    /**
+     * Update the acknowledge state of the given check
+     * @param checkId the check id
+     * @param acknowledged is this check acknowledged
+     * @return true if the check was updated
+     */
+    public boolean acknowledgeCheck(UUID checkId, boolean acknowledged)
+    {
+        return this.useTimed(
+                acknowledge_check, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.acknowledge_check(?::UUID, ?::BOOLEAN)"))
+                {
+                  stmt.setObject(1, checkId);
+                  stmt.setBoolean(2, acknowledged);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next())
+                    {
+                        this.getAdapterCache().remove("check_state." + checkId);
+                        return rs.getBoolean(1);
+                    }
+                  }
+                }
+                return false;
+        });
+    }
+    
+    private Timer set_alert_escalation_threshold = Witchcraft.get().source("com.intrbiz.data.bergamot").getRegistry().timer(Witchcraft.name(BergamotDB.class, "bergamot.set_alert_escalation_threshold(UUID,BIGINT)"));
+    
+    /**
+     * Update the acknowledge state of the given check
+     * @param checkId the check id
+     * @param acknowledged is this check acknowledged
+     * @return true if the check was updated
+     */
+    public boolean setAlertEscalationThreshold(UUID alertId, long escalationThreshold)
+    {
+        return this.useTimed(
+            set_alert_escalation_threshold, 
+            (with) -> {
+                try (PreparedStatement stmt = with.prepareStatement("SELECT bergamot.set_alert_escalation_threshold(?::UUID, ?::BIGINT)"))
+                {
+                  stmt.setObject(1, alertId);
+                  stmt.setLong(2, escalationThreshold);
+                  try (ResultSet rs = stmt.executeQuery())
+                  {
+                    if (rs.next())
+                    {
+                        this.getAdapterCache().remove("alert." + alertId);
+                        return rs.getBoolean(1);
+                    }
                   }
                 }
                 return false;
@@ -2559,6 +2792,70 @@ public abstract class BergamotDB extends DatabaseAdapter
                 "    RETURN FOUND;\n" +
                 "END;\n" +
                 "$$"
+        );
+    }
+    
+    @SQLPatch(name = "add_alert_indexes", index = 13, type = ScriptType.BOTH, version = @SQLVersion({3, 26, 0}), skip = false)
+    public static SQLScript addAlertIndexes()
+    {
+        return new SQLScript(
+           "CREATE INDEX alert_check_id_raised_idx ON bergamot.alert USING btree(check_id, raised)"
+        );
+    }
+    
+    @SQLPatch(name = "add_set_current_alert", index = 14, type = ScriptType.BOTH, version = @SQLVersion({3, 29, 0}), skip = false)
+    public static SQLScript addSetCurrentAlert()
+    {
+        return new SQLScript(
+                
+                "CREATE OR REPLACE FUNCTION bergamot.set_current_alert(p_check_id UUID, p_alert_id UUID)\n" +
+                "RETURNS BOOLEAN\n" +
+                "LANGUAGE PLPGSQL AS $$\n" +
+                "BEGIN\n" +
+                "    UPDATE bergamot.check_state SET current_alert_id = p_alert_id WHERE check_id = p_check_id;\n" +
+                "    RETURN FOUND;\n" +
+                "END;\n" +
+                "$$"
+        );
+    }
+    
+    @SQLPatch(name = "add_acknowledge_check", index = 15, type = ScriptType.BOTH, version = @SQLVersion({3, 31, 0}), skip = false)
+    public static SQLScript addAcknowledgeCheckFunction()
+    {
+        return new SQLScript(
+                
+                "CREATE OR REPLACE FUNCTION bergamot.acknowledge_check(p_check_id UUID, p_acknowledged BOOLEAN)\n" +
+                "RETURNS BOOLEAN\n" +
+                "LANGUAGE PLPGSQL AS $$\n" +
+                "BEGIN\n" +
+                "    UPDATE bergamot.check_state SET acknowledged = p_acknowledged WHERE check_id = p_check_id;\n" +
+                "    RETURN FOUND;\n" +
+                "END;\n" +
+                "$$"
+        );
+    }
+    
+    @SQLPatch(name = "add_set_alert_escalation_threshold", index = 15, type = ScriptType.BOTH, version = @SQLVersion({3, 34, 0}), skip = false)
+    public static SQLScript addSetAlertEscalationThresholdFunction()
+    {
+        return new SQLScript(
+                
+                "CREATE OR REPLACE FUNCTION bergamot.set_alert_escalation_threshold(p_alert_id UUID, p_escalation_threshold BIGINT)\n" +
+                "RETURNS BOOLEAN\n" +
+                "LANGUAGE PLPGSQL AS $$\n" +
+                "BEGIN\n" +
+                "    UPDATE bergamot.alert SET escalation_threshold = p_escalation_threshold WHERE id = p_alert_id;\n" +
+                "    RETURN FOUND;\n" +
+                "END;\n" +
+                "$$"
+        );
+    }
+
+    @SQLPatch(name = "add_config_name_idx", index = 16, type = ScriptType.BOTH, version = @SQLVersion({3, 37, 0}), skip = false)
+    public static SQLScript addConfigNameIndex()
+    {
+        return new SQLScript(
+                "CREATE INDEX config_name_idx ON bergamot.config (site_id ASC NULLS LAST, type ASC NULLS LAST, name ASC NULLS LAST)"
         );
     }
     

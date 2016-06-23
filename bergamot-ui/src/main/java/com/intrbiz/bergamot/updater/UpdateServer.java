@@ -1,5 +1,18 @@
 package com.intrbiz.bergamot.updater;
 
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+
+import org.apache.log4j.Logger;
+
+import com.intrbiz.bergamot.updater.handler.DefaultHandler;
+import com.intrbiz.bergamot.updater.handler.ExecuteAdhocChecksHandler;
+import com.intrbiz.bergamot.updater.handler.PingHandler;
+import com.intrbiz.bergamot.updater.handler.RegisterForAdhocResultsHandler;
+import com.intrbiz.bergamot.updater.handler.RegisterForNotificationsHandler;
+import com.intrbiz.bergamot.updater.handler.RegisterForUpdatesHandler;
+import com.intrbiz.bergamot.updater.handler.RequestHandler;
+
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
@@ -10,17 +23,6 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
-
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-
-import org.apache.log4j.Logger;
-
-import com.intrbiz.bergamot.updater.handler.DefaultHandler;
-import com.intrbiz.bergamot.updater.handler.PingHandler;
-import com.intrbiz.bergamot.updater.handler.RegisterForNotificationsHandler;
-import com.intrbiz.bergamot.updater.handler.RegisterForUpdatesHandler;
-import com.intrbiz.bergamot.updater.handler.RequestHandler;
 
 public class UpdateServer implements Runnable
 {
@@ -34,9 +36,9 @@ public class UpdateServer implements Runnable
 
     private Thread runner = null;
     
-    private ConcurrentMap<Class<?>, RequestHandler> handlers = new ConcurrentHashMap<Class<?>, RequestHandler>();
+    private ConcurrentMap<Class<?>, RequestHandler<?>> handlers = new ConcurrentHashMap<Class<?>, RequestHandler<?>>();
     
-    private RequestHandler defaultHandler;
+    private RequestHandler<?> defaultHandler;
 
     public UpdateServer(int port)
     {
@@ -47,9 +49,11 @@ public class UpdateServer implements Runnable
         this.registerHandler(new PingHandler());
         this.registerHandler(new RegisterForUpdatesHandler());
         this.registerHandler(new RegisterForNotificationsHandler());
+        this.registerHandler(new RegisterForAdhocResultsHandler());
+        this.registerHandler(new ExecuteAdhocChecksHandler());
     }
     
-    public void registerHandler(RequestHandler handler)
+    public void registerHandler(RequestHandler<?> handler)
     {
        for (Class<?> type : handler.getRequestTypes())
        {
@@ -57,14 +61,14 @@ public class UpdateServer implements Runnable
        }
     }
     
-    public void registerDefaultHandler(RequestHandler handler)
+    public void registerDefaultHandler(RequestHandler<?> handler)
     {
         this.defaultHandler = handler;
     }
     
-    public RequestHandler getHandler(Class<?> type)
+    public RequestHandler<?> getHandler(Class<?> type)
     {
-        RequestHandler handler = this.handlers.get(type);
+        RequestHandler<?> handler = this.handlers.get(type);
         return handler == null ? this.defaultHandler : handler;
     }
 

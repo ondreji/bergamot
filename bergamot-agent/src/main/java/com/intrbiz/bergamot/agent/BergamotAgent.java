@@ -1,25 +1,9 @@
 package com.intrbiz.bergamot.agent;
 
-import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.timeout.ReadTimeoutHandler;
-import io.netty.handler.timeout.WriteTimeoutHandler;
-import io.netty.util.concurrent.GenericFutureListener;
-
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.security.KeyStore;
@@ -28,6 +12,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -46,6 +31,7 @@ import org.hyperic.sigar.SigarException;
 import com.intrbiz.bergamot.agent.config.BergamotAgentCfg;
 import com.intrbiz.bergamot.agent.config.Configurable;
 import com.intrbiz.bergamot.agent.handler.AgentInfoHandler;
+import com.intrbiz.bergamot.agent.handler.AgentRegistrationHandler;
 import com.intrbiz.bergamot.agent.handler.CPUInfoHandler;
 import com.intrbiz.bergamot.agent.handler.DefaultHandler;
 import com.intrbiz.bergamot.agent.handler.DiskIOHandler;
@@ -63,6 +49,23 @@ import com.intrbiz.bergamot.model.message.agent.AgentMessage;
 import com.intrbiz.bergamot.model.message.agent.error.AgentError;
 import com.intrbiz.bergamot.model.message.agent.ping.AgentPing;
 import com.intrbiz.bergamot.model.message.agent.ping.AgentPong;
+
+import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.http.HttpClientCodec;
+import io.netty.handler.codec.http.HttpObjectAggregator;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+import io.netty.util.concurrent.GenericFutureListener;
 
 /**
  */
@@ -110,6 +113,7 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
         }, 30000L, 30000L);
         // handlers
         this.setDefaultHandler(new DefaultHandler());
+        this.registerHandler(new AgentRegistrationHandler());
         this.registerHandler(new CPUInfoHandler());
         this.registerHandler(new MemInfoHandler());
         this.registerHandler(new DiskInfoHandler());
@@ -210,12 +214,14 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
         for (Class<?> cls : handler.getMessages())
         {
             this.handlers.put(cls, handler);
+            handler.init(this);
         }
     }
     
     public void setDefaultHandler(AgentHandler handler)
     {
         this.defaultHandler = handler;
+        if (this.defaultHandler != null) this.defaultHandler.init(this);
     }
     
     public AgentHandler getHandler(Class<?> messageType)
@@ -262,7 +268,7 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
                 pipeline.addLast("handler",       new AgentClientHandler(BergamotAgent.this.timer, BergamotAgent.this.server)
                 {
                     @Override
-                    protected AgentMessage processMessage(final ChannelHandlerContext ctx, final AgentMessage request)
+                    protected AgentMessage processAgentMessage(final ChannelHandlerContext ctx, final AgentMessage request)
                     {
                         if (request instanceof AgentPing)
                         {
@@ -352,6 +358,39 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
         }
     }
     
+    public void terminate()
+    {
+        try
+        {
+            this.eventLoop.shutdownGracefully(1, 2, TimeUnit.SECONDS).await();
+        }
+        catch (InterruptedException e)
+        {
+        }
+    }
+    
+    public void restart(final BergamotAgentCfg newConfig)
+    {
+        this.timer.schedule(new TimerTask() {
+            @Override
+            public void run()
+            {
+                try
+                {
+                    BergamotAgent.this.terminate();
+                    // reconfigure
+                    BergamotAgent.this.configure(newConfig);
+                    // start
+                    BergamotAgent.this.start();
+                }
+                catch (Exception e)
+                {
+                    BergamotAgent.this.logger.error("Failed to restart BergamotAgent", e);
+                }
+            }
+        }, 500L);
+    }
+    
     private static void configureLogging() throws Exception
     {
         String logging = System.getProperty("bergamot.logging", "console");
@@ -368,7 +407,7 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
         }
     }
     
-    private static BergamotAgentCfg readConfig() throws JAXBException, FileNotFoundException, IOException
+    public static BergamotAgentCfg readConfig() throws JAXBException, FileNotFoundException, IOException
     {
         FileInputStream input = new FileInputStream(new File(System.getProperty("bergamot.agent.config", "/etc/bergamot/agent.xml")));
         try
@@ -381,6 +420,55 @@ public class BergamotAgent implements Configurable<BergamotAgentCfg>
         }
     }
     
+    public static void saveConfig(BergamotAgentCfg newConfig) throws JAXBException, FileNotFoundException, IOException
+    {
+        File configFile = new File(System.getProperty("bergamot.agent.config", "/etc/bergamot/agent.xml"));
+        // backup the configuration file
+        try
+        {
+            copyFile(configFile, new File(configFile.getAbsolutePath() + "." + System.currentTimeMillis()));
+        }
+        catch (Exception e)
+        {
+            Logger.getLogger(BergamotAgent.class).warn("Failed to write backup configuration file.");
+        }
+        // write the file
+        FileOutputStream output = new FileOutputStream(configFile);
+        try
+        {
+            BergamotAgentCfg.write(BergamotAgentCfg.class, newConfig, output);
+        }
+        finally
+        {
+            output.close();
+        }
+    }
+    
+    private static void copyFile(File from, File to) throws FileNotFoundException, IOException
+    {
+        FileInputStream input = new FileInputStream(from);
+        try
+        {
+            FileOutputStream output = new FileOutputStream(to);
+            try
+            {
+                byte[] buffer = new byte[8192];
+                int r;
+                while ((r = input.read(buffer)) != -1)
+                {
+                    output.write(buffer, 0, r);
+                }
+            }
+            finally
+            {
+                output.close();
+            }
+        }
+        finally
+        {
+            input.close();
+        }
+    }
 
     public static void main(String[] args) throws Exception
     {

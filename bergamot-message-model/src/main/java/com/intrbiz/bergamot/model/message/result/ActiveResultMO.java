@@ -113,6 +113,7 @@ public class ActiveResultMO extends ResultMO
         this.setProcessingPool(check.getProcessingPool());
         this.setCheck(check);
         this.setExecuted(System.currentTimeMillis());
+        this.setAdhocId(check.getAdhocId());
         return this;
     }
     

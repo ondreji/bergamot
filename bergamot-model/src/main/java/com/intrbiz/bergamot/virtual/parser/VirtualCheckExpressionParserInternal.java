@@ -2,12 +2,20 @@
 package com.intrbiz.bergamot.virtual.parser;
 
 import com.intrbiz.bergamot.model.*;
-import com.intrbiz.bergamot.model.virtual.*;
+import com.intrbiz.bergamot.virtual.operator.*;
+import com.intrbiz.bergamot.virtual.reference.*;
 import com.intrbiz.bergamot.virtual.*;
 import java.util.*;
 
 @SuppressWarnings("all")
 public final class VirtualCheckExpressionParserInternal implements VirtualCheckExpressionParserInternalConstants {
+
+  final private Status readStatus() throws ParseException {
+    Token t;
+    t = jj_consume_token(LSTATUS);
+      {if (true) return Status.parse(t.image);}
+    throw new Error("Missing return statement in function");
+  }
 
   final private UUID readUUID() throws ParseException {
     Token t;
@@ -23,19 +31,19 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readHost(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readHost() throws ParseException {
     String name = null;
     UUID id = null;
-    Host host = null;
+    HostReference host = null;
     jj_consume_token(HOST);
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case LUUID:
       id = readUUID();
-                  host = c.lookupHost(id);
+                                  host = new HostById(id);
       break;
     case LSTRING:
       name = readString();
-                  host = c.lookupHost(name);
+                                  host = new HostByName(name);
       break;
     default:
       jj_la1[0] = jj_gen;
@@ -46,39 +54,44 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readService(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readService() throws ParseException {
     String name = null;
     String hostName = null;
     UUID id = null;
-    Service service = null;
-    Host host = null;
+    ServiceReference service = null;
+    HostReference host = null;
     jj_consume_token(SERVICE);
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case LUUID:
       id = readUUID();
-                  service = c.lookupService(id);
+                                  service = new ServiceById(id);
       break;
     case LSTRING:
       name = readString();
+      jj_consume_token(LON);
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
-      case LON:
-        jj_consume_token(LON);
-        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
-        case HOST:
-          jj_consume_token(HOST);
-          break;
-        default:
-          jj_la1[1] = jj_gen;
-          ;
-        }
+      case HOST:
+        jj_consume_token(HOST);
+        break;
+      default:
+        jj_la1[1] = jj_gen;
+        ;
+      }
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case LUUID:
+        id = readUUID();
+                                                  host = new HostById(id);
+        break;
+      case LSTRING:
         hostName = readString();
-                      host = c.lookupHost(hostName);
-                      service = c.lookupService(host, name);
+                                                  host = new HostByName(hostName);
         break;
       default:
         jj_la1[2] = jj_gen;
-        ;
+        jj_consume_token(-1);
+        throw new ParseException();
       }
+                          service = new ServiceByName(host, name);
       break;
     default:
       jj_la1[3] = jj_gen;
@@ -89,22 +102,22 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readTrap(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readParentService() throws ParseException {
     String name = null;
     String hostName = null;
-    UUID id;
-    Trap trap = null;
-    Host host = null;
-    jj_consume_token(TRAP);
+    UUID id = null;
+    ServiceReference service = null;
+    HostReference host = null;
+    jj_consume_token(SERVICE);
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case LUUID:
       id = readUUID();
-                  trap = c.lookupTrap(id);
+                                  service = new ServiceById(id);
       break;
-    case LSTRING:
-      name = readString();
-      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
-      case LON:
+    default:
+      jj_la1[6] = jj_gen;
+      if (jj_2_1(2)) {
+        name = readString();
         jj_consume_token(LON);
         switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
         case HOST:
@@ -114,17 +127,79 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
           jj_la1[4] = jj_gen;
           ;
         }
-        hostName = readString();
-                      host = c.lookupHost(hostName);
-                      trap = c.lookupTrap(host, name);
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case LUUID:
+          id = readUUID();
+                                                  host = new HostById(id);
+          break;
+        case LSTRING:
+          hostName = readString();
+                                                  host = new HostByName(hostName);
+          break;
+        default:
+          jj_la1[5] = jj_gen;
+          jj_consume_token(-1);
+          throw new ParseException();
+        }
+                          service = new ServiceByName(host, name);
+      } else {
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case LSTRING:
+          name = readString();
+                          service = new AnonymousService(name);
+          break;
+        default:
+          jj_la1[7] = jj_gen;
+          jj_consume_token(-1);
+          throw new ParseException();
+        }
+      }
+    }
+      {if (true) return new ValueOperator(service);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private ValueOperator readTrap() throws ParseException {
+    String name = null;
+    String hostName = null;
+    UUID id;
+    TrapReference trap = null;
+    HostReference host = null;
+    jj_consume_token(TRAP);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case LUUID:
+      id = readUUID();
+                                  trap = new TrapById(id);
+      break;
+    case LSTRING:
+      name = readString();
+      jj_consume_token(LON);
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case HOST:
+        jj_consume_token(HOST);
         break;
       default:
-        jj_la1[5] = jj_gen;
+        jj_la1[8] = jj_gen;
         ;
       }
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case LUUID:
+        id = readUUID();
+                                                  host = new HostById(id);
+        break;
+      case LSTRING:
+        hostName = readString();
+                                                  host = new HostByName(hostName);
+        break;
+      default:
+        jj_la1[9] = jj_gen;
+        jj_consume_token(-1);
+        throw new ParseException();
+      }
+                          trap = new TrapByName(host, name);
       break;
     default:
-      jj_la1[6] = jj_gen;
+      jj_la1[10] = jj_gen;
       jj_consume_token(-1);
       throw new ParseException();
     }
@@ -132,22 +207,79 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readCluster(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readParentTrap() throws ParseException {
+    String name = null;
+    String hostName = null;
+    UUID id;
+    TrapReference trap = null;
+    HostReference host = null;
+    jj_consume_token(TRAP);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case LUUID:
+      id = readUUID();
+                                  trap = new TrapById(id);
+      break;
+    default:
+      jj_la1[13] = jj_gen;
+      if (jj_2_2(2)) {
+        name = readString();
+        jj_consume_token(LON);
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case HOST:
+          jj_consume_token(HOST);
+          break;
+        default:
+          jj_la1[11] = jj_gen;
+          ;
+        }
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case LUUID:
+          id = readUUID();
+                                                  host = new HostById(id);
+          break;
+        case LSTRING:
+          hostName = readString();
+                                                  host = new HostByName(hostName);
+          break;
+        default:
+          jj_la1[12] = jj_gen;
+          jj_consume_token(-1);
+          throw new ParseException();
+        }
+                          trap = new TrapByName(host, name);
+      } else {
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case LSTRING:
+          name = readString();
+                          trap = new AnonymousTrap(name);
+          break;
+        default:
+          jj_la1[14] = jj_gen;
+          jj_consume_token(-1);
+          throw new ParseException();
+        }
+      }
+    }
+      {if (true) return new ValueOperator(trap);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private ValueOperator readCluster() throws ParseException {
     String name = null;
     UUID id = null;
-    Cluster cluster = null;
+    ClusterReference cluster = null;
     jj_consume_token(CLUSTER);
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case LUUID:
       id = readUUID();
-                  cluster = c.lookupCluster(id);
+                                  cluster = new ClusterById(id);
       break;
     case LSTRING:
       name = readString();
-                  cluster = c.lookupCluster(name);
+                                  cluster = new ClusterByName(name);
       break;
     default:
-      jj_la1[7] = jj_gen;
+      jj_la1[15] = jj_gen;
       jj_consume_token(-1);
       throw new ParseException();
     }
@@ -155,17 +287,17 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readResource(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readResource() throws ParseException {
     String name = null;
     String clusterName = null;
     UUID id = null;
-    Cluster cluster = null;
-    Resource resource = null;
+    ClusterReference cluster = null;
+    ResourceReference resource = null;
     jj_consume_token(RESOURCE);
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case LUUID:
       id = readUUID();
-                  resource = c.lookupResource(id);
+                                  resource = new ResourceById(id);
       break;
     case LSTRING:
       name = readString();
@@ -177,20 +309,32 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
           jj_consume_token(CLUSTER);
           break;
         default:
-          jj_la1[8] = jj_gen;
+          jj_la1[16] = jj_gen;
           ;
         }
-        clusterName = readString();
-                      cluster = c.lookupCluster(clusterName);
-                      resource = c.lookupResource(cluster, name);
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case LUUID:
+          id = readUUID();
+                                                          cluster = new ClusterById(id);
+          break;
+        case LSTRING:
+          name = readString();
+                                                          cluster = new ClusterByName(name);
+          break;
+        default:
+          jj_la1[17] = jj_gen;
+          jj_consume_token(-1);
+          throw new ParseException();
+        }
+                                  resource = new ResourceByName(cluster, name);
         break;
       default:
-        jj_la1[9] = jj_gen;
+        jj_la1[18] = jj_gen;
         ;
       }
       break;
     default:
-      jj_la1[10] = jj_gen;
+      jj_la1[19] = jj_gen;
       jj_consume_token(-1);
       throw new ParseException();
     }
@@ -198,26 +342,26 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private ValueOperator readCheck(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private ValueOperator readCheck() throws ParseException {
     ValueOperator check;
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case HOST:
-      check = readHost(c);
+      check = readHost();
       break;
     case SERVICE:
-      check = readService(c);
+      check = readService();
       break;
     case TRAP:
-      check = readTrap(c);
+      check = readTrap();
       break;
     case CLUSTER:
-      check = readCluster(c);
+      check = readCluster();
       break;
     case RESOURCE:
-      check = readResource(c);
+      check = readResource();
       break;
     default:
-      jj_la1[11] = jj_gen;
+      jj_la1[20] = jj_gen;
       jj_consume_token(-1);
       throw new ParseException();
     }
@@ -225,19 +369,118 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readValue(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private List<ValueOperator> readCheckList() throws ParseException {
+    List<ValueOperator> checks = new LinkedList<ValueOperator>();
+    ValueOperator check;
+    jj_consume_token(STARRAY);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case HOST:
+    case SERVICE:
+    case TRAP:
+    case RESOURCE:
+    case CLUSTER:
+      check = readCheck();
+                  checks.add(check);
+      label_1:
+      while (true) {
+        switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+        case SEP:
+          ;
+          break;
+        default:
+          jj_la1[21] = jj_gen;
+          break label_1;
+        }
+        jj_consume_token(SEP);
+        check = readCheck();
+                          checks.add(check);
+      }
+      break;
+    default:
+      jj_la1[22] = jj_gen;
+      ;
+    }
+    jj_consume_token(EDARRAY);
+      {if (true) return checks;}
+    throw new Error("Missing return statement in function");
+  }
+
+  final public List<CheckReference> readParents() throws ParseException {
+    List<CheckReference> checks = new LinkedList<CheckReference>();
+    ValueOperator check;
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case HOST:
+      check = readHost();
+      break;
+    case CLUSTER:
+      check = readCluster();
+      break;
+    case RESOURCE:
+      check = readResource();
+      break;
+    case SERVICE:
+      check = readParentService();
+      break;
+    case TRAP:
+      check = readParentTrap();
+      break;
+    default:
+      jj_la1[23] = jj_gen;
+      jj_consume_token(-1);
+      throw new ParseException();
+    }
+                  checks.add(check.getCheck());
+    label_2:
+    while (true) {
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case SEP:
+        ;
+        break;
+      default:
+        jj_la1[24] = jj_gen;
+        break label_2;
+      }
+      jj_consume_token(SEP);
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case HOST:
+        check = readHost();
+        break;
+      case CLUSTER:
+        check = readCluster();
+        break;
+      case RESOURCE:
+        check = readResource();
+        break;
+      case SERVICE:
+        check = readParentService();
+        break;
+      case TRAP:
+        check = readParentTrap();
+        break;
+      default:
+        jj_la1[25] = jj_gen;
+        jj_consume_token(-1);
+        throw new ParseException();
+      }
+                          checks.add(check.getCheck());
+    }
+      {if (true) return checks;}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readValue() throws ParseException {
     VirtualCheckOperator value;
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case STCOMP:
       jj_consume_token(STCOMP);
-      value = readExpression(c);
+      value = readExpression();
       jj_consume_token(EDCOMP);
-              value = new BracketOperator(value);
+                  value = new BracketOperator(value);
       break;
     default:
-      jj_la1[12] = jj_gen;
-      if (jj_2_1(2147483647)) {
-        value = readCheck(c);
+      jj_la1[26] = jj_gen;
+      if (jj_2_3(2147483647)) {
+        value = readCheck();
       } else {
         jj_consume_token(-1);
         throw new ParseException();
@@ -247,15 +490,216 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readUnary(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private VirtualCheckOperator readUnary() throws ParseException {
     VirtualCheckOperator value;
     jj_consume_token(NOT);
-    value = readValue(c);
+    value = readValue();
       {if (true) return new NotOperator(value);}
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readOperator(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private VirtualCheckOperator readAllFunction() throws ParseException {
+    List<ValueOperator> checks;
+    jj_consume_token(ALL);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case OF:
+      jj_consume_token(OF);
+      break;
+    default:
+      jj_la1[27] = jj_gen;
+      ;
+    }
+    checks = readCheckList();
+      {if (true) return new AllFunction(checks);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readAnyFunction() throws ParseException {
+    List<ValueOperator> checks;
+    jj_consume_token(ANY);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case OF:
+      jj_consume_token(OF);
+      break;
+    default:
+      jj_la1[28] = jj_gen;
+      ;
+    }
+    checks = readCheckList();
+      {if (true) return new AnyFunction(checks);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readOneOfFunction() throws ParseException {
+    List<ValueOperator> checks;
+    Status as = null;
+    jj_consume_token(ONE);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case OF:
+      jj_consume_token(OF);
+      break;
+    default:
+      jj_la1[29] = jj_gen;
+      ;
+    }
+    checks = readCheckList();
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case AS:
+      jj_consume_token(AS);
+      as = readStatus();
+      break;
+    default:
+      jj_la1[30] = jj_gen;
+      ;
+    }
+      {if (true) return new OneOfFunction(checks, as);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readCountFunction() throws ParseException {
+    Status status = null;
+    List<ValueOperator> checks;
+    Token test = null;
+    Token value = null;
+    Status as = null;
+    jj_consume_token(COUNT);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case LSTATUS:
+      status = readStatus();
+      break;
+    default:
+      jj_la1[31] = jj_gen;
+      ;
+    }
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case OF:
+      jj_consume_token(OF);
+      break;
+    default:
+      jj_la1[32] = jj_gen;
+      ;
+    }
+    checks = readCheckList();
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case IS:
+      jj_consume_token(IS);
+      break;
+    default:
+      jj_la1[33] = jj_gen;
+      ;
+    }
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case EQ:
+      test = jj_consume_token(EQ);
+      break;
+    case NE:
+      jj_consume_token(NE);
+      break;
+    case LT:
+      jj_consume_token(LT);
+      break;
+    case LTEQ:
+      jj_consume_token(LTEQ);
+      break;
+    case GT:
+      jj_consume_token(GT);
+      break;
+    case GTEQ:
+      jj_consume_token(GTEQ);
+      break;
+    default:
+      jj_la1[34] = jj_gen;
+      jj_consume_token(-1);
+      throw new ParseException();
+    }
+    value = jj_consume_token(LINTEGER);
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case AS:
+      jj_consume_token(AS);
+      as = readStatus();
+      break;
+    default:
+      jj_la1[35] = jj_gen;
+      ;
+    }
+      {if (true) return new CountFunction(status, checks, test.image.toLowerCase(), Integer.parseInt(value.image), as);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readCaseFunction() throws ParseException {
+        VirtualCheckOperator check;
+        Status status;
+        Status as;
+        List<CaseOperator.CaseWhen> when = new LinkedList<CaseOperator.CaseWhen>();
+        Status elseStatus = null;
+    jj_consume_token(CASE);
+    jj_consume_token(WHEN);
+    check = readExpression();
+    jj_consume_token(IS);
+    status = readStatus();
+    jj_consume_token(THEN);
+    as = readStatus();
+                          when.add(new CaseOperator.CaseWhen(check, status, as));
+    label_3:
+    while (true) {
+      switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+      case WHEN:
+        ;
+        break;
+      default:
+        jj_la1[36] = jj_gen;
+        break label_3;
+      }
+      jj_consume_token(WHEN);
+      check = readExpression();
+      jj_consume_token(IS);
+      status = readStatus();
+      jj_consume_token(THEN);
+      as = readStatus();
+                          when.add(new CaseOperator.CaseWhen(check, status, as));
+    }
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case ELSE:
+      jj_consume_token(ELSE);
+      elseStatus = readStatus();
+      break;
+    default:
+      jj_la1[37] = jj_gen;
+      ;
+    }
+    jj_consume_token(END);
+      {if (true) return new CaseOperator(when, elseStatus);}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readFunction() throws ParseException {
+    VirtualCheckOperator operator;
+    switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
+    case ALL:
+      operator = readAllFunction();
+      break;
+    case ANY:
+      operator = readAnyFunction();
+      break;
+    case ONE:
+      operator = readOneOfFunction();
+      break;
+    case COUNT:
+      operator = readCountFunction();
+      break;
+    case CASE:
+      operator = readCaseFunction();
+      break;
+    default:
+      jj_la1[38] = jj_gen;
+      jj_consume_token(-1);
+      throw new ParseException();
+    }
+      {if (true) return operator;}
+    throw new Error("Missing return statement in function");
+  }
+
+  final private VirtualCheckOperator readOperator() throws ParseException {
     VirtualCheckOperator operator;
     switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
     case STCOMP:
@@ -264,13 +708,20 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     case TRAP:
     case RESOURCE:
     case CLUSTER:
-      operator = readValue(c);
+      operator = readValue();
       break;
     case NOT:
-      operator = readUnary(c);
+      operator = readUnary();
+      break;
+    case COUNT:
+    case ALL:
+    case ANY:
+    case ONE:
+    case CASE:
+      operator = readFunction();
       break;
     default:
-      jj_la1[13] = jj_gen;
+      jj_la1[39] = jj_gen;
       jj_consume_token(-1);
       throw new ParseException();
     }
@@ -278,74 +729,74 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     throw new Error("Missing return statement in function");
   }
 
-  final public VirtualCheckOperator readExpression(VirtualCheckExpressionParserContext c) throws ParseException {
+  final public VirtualCheckOperator readExpression() throws ParseException {
     VirtualCheckOperator operator;
-    operator = readXorExpression(c);
+    operator = readXorExpression();
       {if (true) return operator;}
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readXorExpression(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private VirtualCheckOperator readXorExpression() throws ParseException {
     VirtualCheckOperator l;
     VirtualCheckOperator r;
-    l = readOrExpression(c);
-    label_1:
+    l = readOrExpression();
+    label_4:
     while (true) {
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
       case XOR:
         ;
         break;
       default:
-        jj_la1[14] = jj_gen;
-        break label_1;
+        jj_la1[40] = jj_gen;
+        break label_4;
       }
       jj_consume_token(XOR);
-      r = readOrExpression(c);
-              l = new XorOperator(l, r);
+      r = readOrExpression();
+                  l = new XorOperator(l, r);
     }
       {if (true) return l;}
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readOrExpression(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private VirtualCheckOperator readOrExpression() throws ParseException {
     VirtualCheckOperator l;
     VirtualCheckOperator r;
-    l = readAndExpression(c);
-    label_2:
+    l = readAndExpression();
+    label_5:
     while (true) {
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
       case OR:
         ;
         break;
       default:
-        jj_la1[15] = jj_gen;
-        break label_2;
+        jj_la1[41] = jj_gen;
+        break label_5;
       }
       jj_consume_token(OR);
-      r = readAndExpression(c);
-              l = new OrOperator(l, r);
+      r = readAndExpression();
+                  l = new OrOperator(l, r);
     }
       {if (true) return l;}
     throw new Error("Missing return statement in function");
   }
 
-  final private VirtualCheckOperator readAndExpression(VirtualCheckExpressionParserContext c) throws ParseException {
+  final private VirtualCheckOperator readAndExpression() throws ParseException {
     VirtualCheckOperator l;
     VirtualCheckOperator r;
-    l = readOperator(c);
-    label_3:
+    l = readOperator();
+    label_6:
     while (true) {
       switch ((jj_ntk==-1)?jj_ntk():jj_ntk) {
       case AND:
         ;
         break;
       default:
-        jj_la1[16] = jj_gen;
-        break label_3;
+        jj_la1[42] = jj_gen;
+        break label_6;
       }
       jj_consume_token(AND);
-      r = readOperator(c);
-             l = new AndOperator(l,r);
+      r = readOperator();
+                 l = new AndOperator(l,r);
     }
       {if (true) return l;}
     throw new Error("Missing return statement in function");
@@ -358,13 +809,162 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     finally { jj_save(0, xla); }
   }
 
-  private boolean jj_3R_15() {
-    if (jj_3R_25()) return true;
+  private boolean jj_2_2(int xla) {
+    jj_la = xla; jj_lastpos = jj_scanpos = token;
+    try { return !jj_3_2(); }
+    catch(LookaheadSuccess ls) { return true; }
+    finally { jj_save(1, xla); }
+  }
+
+  private boolean jj_2_3(int xla) {
+    jj_la = xla; jj_lastpos = jj_scanpos = token;
+    try { return !jj_3_3(); }
+    catch(LookaheadSuccess ls) { return true; }
+    finally { jj_save(2, xla); }
+  }
+
+  private boolean jj_3R_36() {
+    if (jj_3R_7()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_31() {
+    if (jj_3R_7()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_20() {
+    if (jj_3R_7()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_35() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_30() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3_2() {
+    if (jj_3R_7()) return true;
+    if (jj_scan_token(LON)) return true;
+    return false;
+  }
+
+  private boolean jj_3R_18() {
+    if (jj_scan_token(RESOURCE)) return true;
+    Token xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_27()) {
+    jj_scanpos = xsp;
+    if (jj_3R_28()) return true;
+    }
+    return false;
+  }
+
+  private boolean jj_3R_19() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_13() {
+    if (jj_3R_18()) return true;
     return false;
   }
 
   private boolean jj_3R_12() {
+    if (jj_3R_17()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_11() {
+    if (jj_3R_16()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_26() {
+    if (jj_3R_7()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_10() {
+    if (jj_3R_15()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_16() {
     if (jj_scan_token(TRAP)) return true;
+    Token xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_23()) {
+    jj_scanpos = xsp;
+    if (jj_3R_24()) return true;
+    }
+    return false;
+  }
+
+  private boolean jj_3R_9() {
+    if (jj_3R_14()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_34() {
+    if (jj_scan_token(LON)) return true;
+    Token xsp;
+    xsp = jj_scanpos;
+    if (jj_scan_token(28)) jj_scanpos = xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_35()) {
+    jj_scanpos = xsp;
+    if (jj_3R_36()) return true;
+    }
+    return false;
+  }
+
+  private boolean jj_3R_33() {
+    if (jj_3R_7()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_25() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3_3() {
+    if (jj_3R_8()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_8() {
+    Token xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_9()) {
+    jj_scanpos = xsp;
+    if (jj_3R_10()) {
+    jj_scanpos = xsp;
+    if (jj_3R_11()) {
+    jj_scanpos = xsp;
+    if (jj_3R_12()) {
+    jj_scanpos = xsp;
+    if (jj_3R_13()) return true;
+    }
+    }
+    }
+    }
+    return false;
+  }
+
+  private boolean jj_3R_32() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_14() {
+    if (jj_scan_token(HOST)) return true;
     Token xsp;
     xsp = jj_scanpos;
     if (jj_3R_19()) {
@@ -375,98 +975,80 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
   }
 
   private boolean jj_3R_22() {
-    if (jj_3R_26()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_9() {
-    if (jj_3R_14()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_27() {
+    if (jj_3R_7()) return true;
     if (jj_scan_token(LON)) return true;
     Token xsp;
     xsp = jj_scanpos;
-    if (jj_scan_token(13)) jj_scanpos = xsp;
-    if (jj_3R_26()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_8() {
-    if (jj_3R_13()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_7() {
-    if (jj_3R_12()) return true;
+    if (jj_scan_token(24)) jj_scanpos = xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_30()) {
+    jj_scanpos = xsp;
+    if (jj_3R_31()) return true;
+    }
     return false;
   }
 
   private boolean jj_3R_21() {
-    if (jj_3R_25()) return true;
+    if (jj_3R_29()) return true;
     return false;
   }
 
-  private boolean jj_3R_6() {
-    if (jj_3R_11()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_5() {
-    if (jj_3R_10()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_10() {
-    if (jj_scan_token(HOST)) return true;
+  private boolean jj_3R_17() {
+    if (jj_scan_token(CLUSTER)) return true;
     Token xsp;
     xsp = jj_scanpos;
-    if (jj_3R_15()) {
+    if (jj_3R_25()) {
     jj_scanpos = xsp;
-    if (jj_3R_16()) return true;
+    if (jj_3R_26()) return true;
     }
     return false;
   }
 
-  private boolean jj_3R_4() {
+  private boolean jj_3R_7() {
+    if (jj_scan_token(LSTRING)) return true;
+    return false;
+  }
+
+  private boolean jj_3R_28() {
+    if (jj_3R_7()) return true;
     Token xsp;
     xsp = jj_scanpos;
-    if (jj_3R_5()) {
+    if (jj_3R_34()) jj_scanpos = xsp;
+    return false;
+  }
+
+  private boolean jj_3_1() {
+    if (jj_3R_7()) return true;
+    if (jj_scan_token(LON)) return true;
+    return false;
+  }
+
+  private boolean jj_3R_27() {
+    if (jj_3R_29()) return true;
+    return false;
+  }
+
+  private boolean jj_3R_24() {
+    if (jj_3R_7()) return true;
+    if (jj_scan_token(LON)) return true;
+    Token xsp;
+    xsp = jj_scanpos;
+    if (jj_scan_token(24)) jj_scanpos = xsp;
+    xsp = jj_scanpos;
+    if (jj_3R_32()) {
     jj_scanpos = xsp;
-    if (jj_3R_6()) {
-    jj_scanpos = xsp;
-    if (jj_3R_7()) {
-    jj_scanpos = xsp;
-    if (jj_3R_8()) {
-    jj_scanpos = xsp;
-    if (jj_3R_9()) return true;
-    }
-    }
-    }
+    if (jj_3R_33()) return true;
     }
     return false;
   }
 
   private boolean jj_3R_29() {
-    if (jj_scan_token(LON)) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_scan_token(17)) jj_scanpos = xsp;
-    if (jj_3R_26()) return true;
+    if (jj_scan_token(LUUID)) return true;
     return false;
   }
 
-  private boolean jj_3R_18() {
-    if (jj_3R_26()) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_3R_27()) jj_scanpos = xsp;
-    return false;
-  }
-
-  private boolean jj_3R_13() {
-    if (jj_scan_token(CLUSTER)) return true;
+  private boolean jj_3R_15() {
+    if (jj_scan_token(SERVICE)) return true;
     Token xsp;
     xsp = jj_scanpos;
     if (jj_3R_21()) {
@@ -476,85 +1058,8 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     return false;
   }
 
-  private boolean jj_3R_17() {
-    if (jj_3R_25()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_28() {
-    if (jj_scan_token(LON)) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_scan_token(13)) jj_scanpos = xsp;
-    if (jj_3R_26()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_26() {
-    if (jj_scan_token(LSTRING)) return true;
-    return false;
-  }
-
-  private boolean jj_3_1() {
-    if (jj_3R_4()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_24() {
-    if (jj_3R_26()) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_3R_29()) jj_scanpos = xsp;
-    return false;
-  }
-
   private boolean jj_3R_23() {
-    if (jj_3R_25()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_25() {
-    if (jj_scan_token(LUUID)) return true;
-    return false;
-  }
-
-  private boolean jj_3R_11() {
-    if (jj_scan_token(SERVICE)) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_3R_17()) {
-    jj_scanpos = xsp;
-    if (jj_3R_18()) return true;
-    }
-    return false;
-  }
-
-  private boolean jj_3R_20() {
-    if (jj_3R_26()) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_3R_28()) jj_scanpos = xsp;
-    return false;
-  }
-
-  private boolean jj_3R_19() {
-    if (jj_3R_25()) return true;
-    return false;
-  }
-
-  private boolean jj_3R_14() {
-    if (jj_scan_token(RESOURCE)) return true;
-    Token xsp;
-    xsp = jj_scanpos;
-    if (jj_3R_23()) {
-    jj_scanpos = xsp;
-    if (jj_3R_24()) return true;
-    }
-    return false;
-  }
-
-  private boolean jj_3R_16() {
-    if (jj_3R_26()) return true;
+    if (jj_3R_29()) return true;
     return false;
   }
 
@@ -569,15 +1074,20 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
   private Token jj_scanpos, jj_lastpos;
   private int jj_la;
   private int jj_gen;
-  final private int[] jj_la1 = new int[17];
+  final private int[] jj_la1 = new int[43];
   static private int[] jj_la1_0;
+  static private int[] jj_la1_1;
   static {
       jj_la1_init_0();
+      jj_la1_init_1();
    }
    private static void jj_la1_init_0() {
-      jj_la1_0 = new int[] {0x800040,0x2000,0x40000,0x800040,0x2000,0x40000,0x800040,0x800040,0x20000,0x40000,0x800040,0x3e000,0x800,0x3ec00,0x80,0x100,0x200,};
+      jj_la1_0 = new int[] {0x40,0x1000000,0x40,0x40,0x1000000,0x40,0x40,0x0,0x1000000,0x40,0x40,0x1000000,0x40,0x40,0x0,0x40,0x10000000,0x40,0x20000000,0x40,0x1f000000,0x800000,0x1f000000,0x1f000000,0x800000,0x1f000000,0x20000,0x0,0x0,0x0,0x0,0x0,0x0,0x80000000,0x1f800,0x0,0x0,0x0,0x40000000,0x5f020400,0x80,0x100,0x200,};
    }
-  final private JJCalls[] jj_2_rtns = new JJCalls[1];
+   private static void jj_la1_init_1() {
+      jj_la1_1 = new int[] {0x10000,0x0,0x10000,0x10000,0x0,0x10000,0x0,0x10000,0x0,0x10000,0x10000,0x0,0x10000,0x0,0x10000,0x10000,0x0,0x10000,0x0,0x10000,0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x8,0x8,0x8,0x200,0x400,0x8,0x0,0x0,0x200,0x20,0x80,0x17,0x17,0x0,0x0,0x0,};
+   }
+  final private JJCalls[] jj_2_rtns = new JJCalls[3];
   private boolean jj_rescan = false;
   private int jj_gc = 0;
 
@@ -592,7 +1102,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -607,7 +1117,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -618,7 +1128,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -629,7 +1139,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -639,7 +1149,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -649,7 +1159,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
     token = new Token();
     jj_ntk = -1;
     jj_gen = 0;
-    for (int i = 0; i < 17; i++) jj_la1[i] = -1;
+    for (int i = 0; i < 43; i++) jj_la1[i] = -1;
     for (int i = 0; i < jj_2_rtns.length; i++) jj_2_rtns[i] = new JJCalls();
   }
 
@@ -761,21 +1271,24 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
   /** Generate ParseException. */
   public ParseException generateParseException() {
     jj_expentries.clear();
-    boolean[] la1tokens = new boolean[32];
+    boolean[] la1tokens = new boolean[57];
     if (jj_kind >= 0) {
       la1tokens[jj_kind] = true;
       jj_kind = -1;
     }
-    for (int i = 0; i < 17; i++) {
+    for (int i = 0; i < 43; i++) {
       if (jj_la1[i] == jj_gen) {
         for (int j = 0; j < 32; j++) {
           if ((jj_la1_0[i] & (1<<j)) != 0) {
             la1tokens[j] = true;
           }
+          if ((jj_la1_1[i] & (1<<j)) != 0) {
+            la1tokens[32+j] = true;
+          }
         }
       }
     }
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < 57; i++) {
       if (la1tokens[i]) {
         jj_expentry = new int[1];
         jj_expentry[0] = i;
@@ -802,7 +1315,7 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
 
   private void jj_rescan_token() {
     jj_rescan = true;
-    for (int i = 0; i < 1; i++) {
+    for (int i = 0; i < 3; i++) {
     try {
       JJCalls p = jj_2_rtns[i];
       do {
@@ -810,6 +1323,8 @@ public final class VirtualCheckExpressionParserInternal implements VirtualCheckE
           jj_la = p.arg; jj_lastpos = jj_scanpos = p.first;
           switch (i) {
             case 0: jj_3_1(); break;
+            case 1: jj_3_2(); break;
+            case 2: jj_3_3(); break;
           }
         }
         p = p.next;

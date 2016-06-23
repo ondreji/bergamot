@@ -35,5 +35,21 @@
     	<groupId>com.intrbiz.bergamot</groupId>
     	<artifactId>bergamot-daemon-config</artifactId>
     </dependency>
+    <dependency>
+    	<groupId>com.intrbiz.bergamot</groupId>
+    	<artifactId>bergamot-healthcheck-agent</artifactId>
+    </dependency>
+    <dependency>
+    	<groupId>com.intrbiz.bergamot</groupId>
+    	<artifactId>bergamot-healthcheck-tracker</artifactId>
+    </dependency>
+    <dependency>
+		<groupId>com.intrbiz.bergamot</groupId>
+		<artifactId>bergamot-accounting-model</artifactId>
+	</dependency>
+    <dependency>
+    	<groupId>com.intrbiz.bergamot</groupId>
+    	<artifactId>bergamot-accounting-consumer</artifactId>
+    </dependency>
   </dependencies>
 </project>

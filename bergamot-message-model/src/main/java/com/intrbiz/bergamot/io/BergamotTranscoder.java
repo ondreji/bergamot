@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.intrbiz.bergamot.model.message.AlertEncompassesMO;
+import com.intrbiz.bergamot.model.message.AlertEscalationMO;
 import com.intrbiz.bergamot.model.message.AlertMO;
 import com.intrbiz.bergamot.model.message.AuthTokenMO;
 import com.intrbiz.bergamot.model.message.ClusterMO;
@@ -28,6 +30,7 @@ import com.intrbiz.bergamot.model.message.CommandMO;
 import com.intrbiz.bergamot.model.message.CommentMO;
 import com.intrbiz.bergamot.model.message.ContactMO;
 import com.intrbiz.bergamot.model.message.DowntimeMO;
+import com.intrbiz.bergamot.model.message.EscalationMO;
 import com.intrbiz.bergamot.model.message.GroupMO;
 import com.intrbiz.bergamot.model.message.HostMO;
 import com.intrbiz.bergamot.model.message.LocationMO;
@@ -47,6 +50,7 @@ import com.intrbiz.bergamot.model.message.agent.manager.request.GetServer;
 import com.intrbiz.bergamot.model.message.agent.manager.request.GetSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.request.SignAgent;
 import com.intrbiz.bergamot.model.message.agent.manager.request.SignServer;
+import com.intrbiz.bergamot.model.message.agent.manager.request.SignTemplate;
 import com.intrbiz.bergamot.model.message.agent.manager.response.AgentManagerError;
 import com.intrbiz.bergamot.model.message.agent.manager.response.CreatedSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.response.GotAgent;
@@ -55,11 +59,18 @@ import com.intrbiz.bergamot.model.message.agent.manager.response.GotServer;
 import com.intrbiz.bergamot.model.message.agent.manager.response.GotSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.response.SignedAgent;
 import com.intrbiz.bergamot.model.message.agent.manager.response.SignedServer;
+import com.intrbiz.bergamot.model.message.agent.manager.response.SignedTemplate;
 import com.intrbiz.bergamot.model.message.api.call.AppliedConfigChange;
+import com.intrbiz.bergamot.model.message.api.call.VerifiedCommand;
+import com.intrbiz.bergamot.model.message.api.check.ExecuteAdhocCheck;
+import com.intrbiz.bergamot.model.message.api.check.ExecutedAdhocCheck;
 import com.intrbiz.bergamot.model.message.api.error.APIError;
 import com.intrbiz.bergamot.model.message.api.notification.NotificationEvent;
 import com.intrbiz.bergamot.model.message.api.notification.RegisterForNotifications;
 import com.intrbiz.bergamot.model.message.api.notification.RegisteredForNotifications;
+import com.intrbiz.bergamot.model.message.api.result.AdhocResultEvent;
+import com.intrbiz.bergamot.model.message.api.result.RegisterForAdhocResults;
+import com.intrbiz.bergamot.model.message.api.result.RegisteredForAdhocResults;
 import com.intrbiz.bergamot.model.message.api.update.RegisterForUpdates;
 import com.intrbiz.bergamot.model.message.api.update.RegisteredForUpdates;
 import com.intrbiz.bergamot.model.message.api.update.UpdateEvent;
@@ -71,9 +82,18 @@ import com.intrbiz.bergamot.model.message.cluster.manager.request.InitSite;
 import com.intrbiz.bergamot.model.message.cluster.manager.response.ClusterManagerError;
 import com.intrbiz.bergamot.model.message.cluster.manager.response.FlushedGlobalCaches;
 import com.intrbiz.bergamot.model.message.cluster.manager.response.InitedSite;
+import com.intrbiz.bergamot.model.message.command.RegisteredBergamotAgent;
+import com.intrbiz.bergamot.model.message.command.GeneralCommandError;
+import com.intrbiz.bergamot.model.message.command.RegisterBergamotAgent;
+import com.intrbiz.bergamot.model.message.config.BergamotValidationReportMO;
 import com.intrbiz.bergamot.model.message.event.control.RegisterWatcher;
 import com.intrbiz.bergamot.model.message.event.watcher.RegisterCheck;
 import com.intrbiz.bergamot.model.message.event.watcher.UnregisterCheck;
+import com.intrbiz.bergamot.model.message.health.HealthCheckHeartbeat;
+import com.intrbiz.bergamot.model.message.health.HealthCheckJoin;
+import com.intrbiz.bergamot.model.message.health.HealthCheckKill;
+import com.intrbiz.bergamot.model.message.health.HealthCheckRequestJoin;
+import com.intrbiz.bergamot.model.message.health.HealthCheckUnjoin;
 import com.intrbiz.bergamot.model.message.importer.BergamotImportReportMO;
 import com.intrbiz.bergamot.model.message.notification.PasswordResetNotification;
 import com.intrbiz.bergamot.model.message.notification.RegisterContactNotification;
@@ -120,6 +140,7 @@ public class BergamotTranscoder
     public static final Class<?>[] CLASSES = {
         // message objects
         NotificationEngineMO.class,
+        EscalationMO.class,
         NotificationsMO.class,
         CheckStateMO.class,
         GroupStateMO.class,
@@ -135,6 +156,8 @@ public class BergamotTranscoder
         TeamMO.class,
         TimePeriodMO.class,
         AlertMO.class,
+        AlertEscalationMO.class,
+        AlertEncompassesMO.class,
         CommentMO.class,
         DowntimeMO.class,
         SecurityDomainMO.class,
@@ -185,6 +208,11 @@ public class BergamotTranscoder
         NotificationEvent.class,
         RegisterForNotifications.class,
         RegisteredForNotifications.class,
+        RegisterForAdhocResults.class,
+        RegisteredForAdhocResults.class,
+        AdhocResultEvent.class,
+        ExecuteAdhocCheck.class,
+        ExecutedAdhocCheck.class,
         // control
         RegisterWatcher.class,
         // watcher
@@ -211,6 +239,8 @@ public class BergamotTranscoder
         SignServer.class,
         SignedServer.class,
         AgentManagerError.class,
+        SignTemplate.class,
+        SignedTemplate.class,
         // cluster manager
         ClusterManagerError.class,
         InitSite.class,
@@ -219,7 +249,19 @@ public class BergamotTranscoder
         FlushedGlobalCaches.class,
         // util models
         BergamotImportReportMO.class,
-        AppliedConfigChange.class
+        AppliedConfigChange.class,
+        BergamotValidationReportMO.class,
+        VerifiedCommand.class,
+        // heathchecks
+        HealthCheckJoin.class,
+        HealthCheckHeartbeat.class,
+        HealthCheckUnjoin.class,
+        HealthCheckRequestJoin.class,
+        HealthCheckKill.class,
+        // commands
+        RegisterBergamotAgent.class,
+        RegisteredBergamotAgent.class,
+        GeneralCommandError.class
     };
     
     private final ObjectMapper factory = new ObjectMapper();

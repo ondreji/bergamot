@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.security.PublicKey;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -15,7 +16,9 @@ import com.intrbiz.bergamot.crypto.util.PEMUtil;
 import com.intrbiz.bergamot.crypto.util.SerialNum;
 import com.intrbiz.bergamot.data.BergamotDB;
 import com.intrbiz.bergamot.metadata.IgnoreBinding;
+import com.intrbiz.bergamot.metadata.IsaObjectId;
 import com.intrbiz.bergamot.model.AgentRegistration;
+import com.intrbiz.bergamot.model.Contact;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.ui.BergamotApp;
 import com.intrbiz.metadata.Any;
@@ -51,16 +54,15 @@ public class AgentAPIRouter extends Router<BergamotApp>
         // parse the certificate request
         CertificateRequest req = PEMUtil.loadCertificateRequest(certReq);
         // is an agent already registered
-        AgentRegistration agentReg = db.getAgentRegistrationByName(site.getId(), req.getCommonName());
-        if (agentReg != null) throw new RuntimeException("Cannot generate configuration for an agent which already exists!");
+        AgentRegistration existingAgent = db.getAgentRegistrationByName(site.getId(), req.getCommonName());
         // assign the agent UUID
-        UUID agentId = Site.randomId(site.getId());
+        UUID agentId = var("agentId", existingAgent != null ? existingAgent.getId() : Site.randomId(site.getId()));
         // get the Root CA Certificate
         Certificate rootCrt  = action("get-root-ca");
         // get the Site CA Certificate
         Certificate siteCrt  = action("get-site-ca", site.getId());
         // ok, actually sign the agent certificate
-        Certificate agentCrt = action("sign-agent", site.getId(), agentId, req);
+        Certificate agentCrt = action("sign-agent", site.getId(), agentId, req, ((Contact) currentPrincipal()).getId());
         // store the registration
         db.setAgentRegistration(new AgentRegistration(site.getId(), agentId, req.getCommonName(), SerialNum.fromBigInt(((X509Certificate) agentCrt).getSerialNumber()).toString()));
         // return the certificate chain
@@ -86,18 +88,17 @@ public class AgentAPIRouter extends Router<BergamotApp>
     ) throws IOException
     {
         // is an agent already registered
-        AgentRegistration agentReg = db.getAgentRegistrationByName(site.getId(), commonName);
-        if (agentReg != null) throw new RuntimeException("Cannot generate configuration for an agent which already exists!");
+        AgentRegistration existingAgent = db.getAgentRegistrationByName(site.getId(), commonName);
         // decode the key
         PublicKey key = PEMUtil.loadPublicKey(publicKey);
         // assign the agent UUID
-        UUID agentId = Site.randomId(site.getId());
+        UUID agentId = var("agentId", existingAgent != null ? existingAgent.getId() : Site.randomId(site.getId()));
         // get the Root CA Certificate
         Certificate rootCrt  = action("get-root-ca");
         // get the Site CA Certificate
         Certificate siteCrt  = action("get-site-ca", site.getId());
         // ok, actually sign the agent certificate
-        Certificate agentCrt = action("sign-agent-key", site.getId(), agentId, commonName, key);
+        Certificate agentCrt = action("sign-agent-key", site.getId(), agentId, commonName, key, ((Contact) currentPrincipal()).getId());
         // store the registration
         db.setAgentRegistration(new AgentRegistration(site.getId(), agentId, commonName, SerialNum.fromBigInt(((X509Certificate) agentCrt).getSerialNumber()).toString()));
         // return the certificate chain
@@ -106,5 +107,21 @@ public class AgentAPIRouter extends Router<BergamotApp>
                 PEMUtil.saveCertificate(siteCrt),
                 PEMUtil.saveCertificate(rootCrt),
         });
+    }
+    
+    /**
+     * Revoke an agent certificate
+     */
+    @Any("/revoke-agent")   
+    @JSON
+    @WithDataAdapter(BergamotDB.class)
+    @IgnoreBinding
+    public String revokeAgent(BergamotDB db, @Var("site") Site site, @Param("id") @IsaObjectId UUID agentId) throws IOException
+    {
+        AgentRegistration agent = notNull(db.getAgentRegistration(agentId), "No such agent: " + agentId);
+        agent.setRevoked(true);
+        agent.setRevokedOn(new Timestamp(System.currentTimeMillis()));
+        db.setAgentRegistration(agent);
+        return "revoked";
     }
 }

@@ -26,6 +26,7 @@ import com.intrbiz.bergamot.queue.SchedulerQueue;
 import com.intrbiz.bergamot.queue.UpdateQueue;
 import com.intrbiz.bergamot.queue.WorkerQueue;
 import com.intrbiz.bergamot.queue.key.ActiveResultKey;
+import com.intrbiz.bergamot.queue.key.AdhocResultKey;
 import com.intrbiz.bergamot.queue.key.NotificationKey;
 import com.intrbiz.bergamot.queue.key.PassiveResultKey;
 import com.intrbiz.bergamot.queue.key.ResultKey;
@@ -63,6 +64,8 @@ public abstract class AbstractResultProcessor implements ResultProcessor
     private UpdateQueue updateQueue;
 
     private RoutedProducer<Update, UpdateKey> updateProducer;
+    
+    private RoutedProducer<ResultMO, AdhocResultKey> adhocProducer;
 
     private int threads = Runtime.getRuntime().availableProcessors();
 
@@ -123,21 +126,21 @@ public abstract class AbstractResultProcessor implements ResultProcessor
         for (int i = 0; i < this.getThreads(); i++)
         {
             // consume results, currently for all sites
-            this.resultConsumers.add(this.workerQueue.consumeResults((r) -> {
-                logger.trace("Processing pooled/site result");
+            this.resultConsumers.add(this.workerQueue.consumeResults((h, r) -> {
+                if (logger.isTraceEnabled()) logger.trace("Processing pooled/site result: " + r);
                 processExecuted(r);
             }, this.instanceId.toString()));
             // consume results, currently for all sites
-            this.fallbackConsumers.add(this.workerQueue.consumeFallbackResults((r) -> {
-                logger.debug("Processing fallback result");
+            this.fallbackConsumers.add(this.workerQueue.consumeFallbackResults((h, r) -> {
+                if (logger.isDebugEnabled()) logger.debug("Processing fallback result: " + r);
                 processExecuted(r);
             }));
             // consume dead checks, currently for all sites
-            this.deadConsumers.add(this.workerQueue.consumeDeadChecks((e) -> {
+            this.deadConsumers.add(this.workerQueue.consumeDeadChecks((h, e) -> {
                 processDead(e);
             }));
             // consume dead agent checks, currently for all sites
-            this.deadAgentConsumers.add(this.workerQueue.consumeDeadAgentChecks((e) -> {
+            this.deadAgentConsumers.add(this.workerQueue.consumeDeadAgentChecks((h, e) -> {
                 processDeadAgent(e);
             }));
         }
@@ -150,6 +153,14 @@ public abstract class AbstractResultProcessor implements ResultProcessor
         // updates
         this.updateQueue = UpdateQueue.open();
         this.updateProducer = this.updateQueue.publishUpdates();
+        // adhoc
+        this.adhocProducer = this.workerQueue.publishAdhocResults();
+    }
+    
+    protected void publishAdhocResult(ResultMO result)
+    {
+        if (logger.isTraceEnabled()) logger.trace("Publishing adhoc result to " + result.getAdhocId() + " with message " + result);
+        this.adhocProducer.publish(new AdhocResultKey(result.getAdhocId()), result);
     }
 
     protected void rescheduleCheck(ActiveCheck<?, ?> check, long interval)

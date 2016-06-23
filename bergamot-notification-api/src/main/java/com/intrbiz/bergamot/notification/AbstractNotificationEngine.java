@@ -3,10 +3,13 @@ package com.intrbiz.bergamot.notification;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.UUID;
 
 import org.apache.log4j.Logger;
 
+import com.intrbiz.bergamot.accounting.model.AccountingNotificationType;
 import com.intrbiz.bergamot.config.NotificationEngineCfg;
+import com.intrbiz.bergamot.health.model.KnownDaemon;
 import com.intrbiz.bergamot.model.message.ClusterMO;
 import com.intrbiz.bergamot.model.message.HostMO;
 import com.intrbiz.bergamot.model.message.ResourceMO;
@@ -16,6 +19,9 @@ import com.intrbiz.bergamot.model.message.notification.CheckNotification;
 import com.intrbiz.bergamot.model.message.notification.Notification;
 import com.intrbiz.bergamot.model.message.notification.PasswordResetNotification;
 import com.intrbiz.bergamot.model.message.notification.RegisterContactNotification;
+import com.intrbiz.bergamot.model.message.notification.SendAcknowledge;
+import com.intrbiz.bergamot.model.message.notification.SendAlert;
+import com.intrbiz.bergamot.model.message.notification.SendRecovery;
 import com.intrbiz.express.DefaultContext;
 import com.intrbiz.express.ExpressContext;
 import com.intrbiz.express.ExpressEntityResolver;
@@ -110,7 +116,7 @@ public abstract class AbstractNotificationEngine implements NotificationEngine
 
     public void addTemplate(String name, String template)
     {
-        this.addTemplate(name, new ValueExpression(this.createContext(null), template));
+        this.addTemplate(name, new ValueExpression(this.createContext((Notification) null), template));
     }
 
     public void addTemplate(String name, ValueExpression template)
@@ -209,5 +215,61 @@ public abstract class AbstractNotificationEngine implements NotificationEngine
             }
         });
         return ctx;
+    }
+    
+    public String applyTemplate(String name, KnownDaemon daemon)
+    {
+        ValueExpression vexp = this.getTemplate(name);
+        if (vexp != null)
+        {
+            return String.valueOf(vexp.get(this.createContext(daemon), daemon));
+        }
+        throw new NotificationException("Failed to find template: " + name);
+    }
+    
+    protected ExpressContext createContext(KnownDaemon daemon)
+    {
+        ExpressContext ctx = new DefaultContext(this.expressExtensions, new ExpressEntityResolver()
+        {
+            @Override
+            public Object getEntity(String name, Object source)
+            {
+                if (daemon != null)
+                {
+                    if ("this".equals(name) || "daemon".equals(name))
+                    {
+                        return daemon;
+                    }
+                }
+                return null;
+            }
+
+            @Override
+            public ActionHandler getAction(String name, Object source)
+            {
+                return null;
+            }
+        });
+        return ctx;
+    }
+    
+    // accounting helpers
+    
+    public static AccountingNotificationType getNotificationType(Notification notification)
+    {
+        if (notification instanceof SendAlert) return AccountingNotificationType.ALERT;
+        else if (notification instanceof SendRecovery) return AccountingNotificationType.RECOVERY;
+        else if (notification instanceof SendAcknowledge) return AccountingNotificationType.ACKNOWLEDGEMENT;
+        else if (notification instanceof PasswordResetNotification) return AccountingNotificationType.RESET;
+        else if (notification instanceof RegisterContactNotification) return AccountingNotificationType.REGISTER;
+        return null;
+    }
+    
+    public static UUID getObjectId(Notification notification)
+    {
+        if (notification instanceof CheckNotification) return ((CheckNotification) notification).getCheck().getId();
+        else if (notification instanceof PasswordResetNotification) return ((PasswordResetNotification) notification).getContact().getId();
+        else if (notification instanceof RegisterContactNotification) return ((RegisterContactNotification) notification).getContact().getId();
+        return null;
     }
 }

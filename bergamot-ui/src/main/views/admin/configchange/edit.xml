@@ -16,13 +16,13 @@
 				</p>
 			</div>
 	   		<div class="col12">
-	   			<input type="submit" name="save" id="save" value="Save Change"/>
+	   			<input type="submit" name="save" id="save" value="Save Change" style="margin-left: 0px;"/>
 	   		</div>
    		</form>
     </div>
     <!-- ACE text editor -->
-    <script src="#{public('/js/v1.5.0/bower_components/ace-builds/src-noconflict/ace.js')}" />
-    <script src="#{public('/js/v1.5.0/bower_components/ace-builds/src-noconflict/ext-language_tools.js')}" />
+    <script src="#{public('/js/' + bergamot_js_version() + '/bower_components/ace-builds/src-noconflict/ace.js')}" />
+    <script src="#{public('/js/' + bergamot_js_version() + '/bower_components/ace-builds/src-noconflict/ext-language_tools.js')}" />
     <script type="text/javascript">
 	  <![CDATA[
 	    /* Setup the editor */

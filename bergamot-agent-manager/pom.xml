@@ -39,6 +39,10 @@
 		<groupId>com.intrbiz.util</groupId>
 		<artifactId>bootstrap</artifactId>
 	</dependency>
+   	<dependency>
+   		<groupId>com.intrbiz.bergamot</groupId>
+   		<artifactId>bergamot-healthcheck-agent</artifactId>
+   	</dependency>
   </dependencies>
   	<build>
 		<finalName>bergamot-agent-manager</finalName>
@@ -46,7 +50,7 @@
 			<plugin>
 				<groupId>com.intrbiz.util</groupId>
 				<artifactId>packaging</artifactId>
-				<version>1.0.0</version>
+				<version>1.1.1</version>
 				<configuration>
 					<appClass>com.intrbiz.bergamot.agent.manager.BergamotAgentManager</appClass>
 				</configuration>

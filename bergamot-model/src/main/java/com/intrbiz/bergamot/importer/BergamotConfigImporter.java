@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 import org.apache.log4j.Logger;
 
+import com.codahale.metrics.Timer;
 import com.intrbiz.Util;
 import com.intrbiz.bergamot.config.model.AccessControlCfg;
 import com.intrbiz.bergamot.config.model.ActiveCheckCfg;
@@ -22,6 +23,7 @@ import com.intrbiz.bergamot.config.model.CheckCfg;
 import com.intrbiz.bergamot.config.model.ClusterCfg;
 import com.intrbiz.bergamot.config.model.CommandCfg;
 import com.intrbiz.bergamot.config.model.ContactCfg;
+import com.intrbiz.bergamot.config.model.EscalateCfg;
 import com.intrbiz.bergamot.config.model.GroupCfg;
 import com.intrbiz.bergamot.config.model.HostCfg;
 import com.intrbiz.bergamot.config.model.LocationCfg;
@@ -50,6 +52,7 @@ import com.intrbiz.bergamot.model.Cluster;
 import com.intrbiz.bergamot.model.Command;
 import com.intrbiz.bergamot.model.Config;
 import com.intrbiz.bergamot.model.Contact;
+import com.intrbiz.bergamot.model.Escalation;
 import com.intrbiz.bergamot.model.Group;
 import com.intrbiz.bergamot.model.Host;
 import com.intrbiz.bergamot.model.Location;
@@ -76,15 +79,18 @@ import com.intrbiz.bergamot.model.message.scheduler.SchedulerAction;
 import com.intrbiz.bergamot.model.message.scheduler.UnscheduleCheck;
 import com.intrbiz.bergamot.model.state.CheckState;
 import com.intrbiz.bergamot.model.state.CheckStats;
-import com.intrbiz.bergamot.model.virtual.VirtualCheckOperator;
 import com.intrbiz.bergamot.queue.NotificationQueue;
 import com.intrbiz.bergamot.queue.SchedulerQueue;
 import com.intrbiz.bergamot.queue.key.NotificationKey;
 import com.intrbiz.bergamot.queue.key.SchedulerKey;
+import com.intrbiz.bergamot.virtual.VirtualCheckExpressionContext;
 import com.intrbiz.bergamot.virtual.VirtualCheckExpressionParser;
+import com.intrbiz.bergamot.virtual.operator.VirtualCheckOperator;
+import com.intrbiz.bergamot.virtual.reference.CheckReference;
 import com.intrbiz.configuration.CfgParameter;
 import com.intrbiz.configuration.Configuration;
 import com.intrbiz.data.DataException;
+import com.intrbiz.gerald.witchcraft.Witchcraft;
 import com.intrbiz.queue.RoutedProducer;
 
 public class BergamotConfigImporter
@@ -114,6 +120,8 @@ public class BergamotConfigImporter
     private boolean rebuildPermissions = false;
     
     private boolean clearPermissionsCache = false;
+    
+    private Timer importTimer = Witchcraft.get().source("com.intrbiz.config.bergamot").getRegistry().timer(Witchcraft.name(BergamotConfigImporter.class, "import_time"));
     
     public BergamotConfigImporter(ValidatedBergamotConfiguration validated)
     {
@@ -149,99 +157,104 @@ public class BergamotConfigImporter
     {
         if (this.report == null)
         {
-            this.report = new BergamotImportReport(this.config.getSite());
-            try
+            try (Timer.Context tctx = this.importTimer.time())
             {
-                // update database
-                try (BergamotDB db = BergamotDB.connect())
+                this.report = new BergamotImportReport(this.config.getSite());
+                try
                 {
-                    db.execute(()-> {
-                        // setup the site
-                        this.loadSite(db);
-                        // compute any cascading changes
-                        this.computeCascade(db);
-                        // load any security domains
-                        this.loadSecurityDomains(db);
-                        // templates
-                        this.loadTemplates(db);
-                        // load the commands
-                        this.loadCommands(db);
-                        // time periods
-                        this.loadTimePeriods(db);
-                        // teams
-                        this.loadTeams(db);
-                        // contacts
-                        this.loadContacts(db);
-                        // load the locations
-                        this.loadLocations(db);
-                        // groups
-                        this.loadGroups(db);
-                        // hosts
-                        this.loadHosts(db);
-                        // clusters
-                        this.loadClusters(db);
-                        // rebuild computed permissions
-                        if (this.rebuildPermissions)
-                        {
-                            this.report.info("Rebuilding computed permissions");
-                            db.buildPermissions(this.site.getId());
-                        }
-                        if (this.clearPermissionsCache)
-                        {
-                            this.report.info("Clearing permissions cache");
-                            db.invalidatePermissionsCache(this.site.getId());
-                        }
-                    });
-                    // delayed actions
-                    if (this.online)
+                    // update database
+                    try (BergamotDB db = BergamotDB.connect())
                     {
-                        // we must publish any scheduling changes after we have committed the transaction
-                        // publish all scheduling changes
-                        try (SchedulerQueue queue = SchedulerQueue.open())
-                        {
-                            try (RoutedProducer<SchedulerAction, SchedulerKey> producer = queue.publishSchedulerActions())
+                        db.execute(()-> {
+                            // setup the site
+                            this.loadSite(db);
+                            // compute any cascading changes
+                            this.computeCascade(db);
+                            // load any security domains
+                            this.loadSecurityDomains(db);
+                            // templates
+                            this.loadTemplates(db);
+                            // load the commands
+                            this.loadCommands(db);
+                            // time periods
+                            this.loadTimePeriods(db);
+                            // teams
+                            this.loadTeams(db);
+                            // contacts
+                            this.loadContacts(db);
+                            // load the locations
+                            this.loadLocations(db);
+                            // groups
+                            this.loadGroups(db);
+                            // hosts
+                            this.loadHosts(db);
+                            // clusters
+                            this.loadClusters(db);
+                            // link any check to check dependencies
+                            this.linkDependencies(db);
+                            // rebuild computed permissions
+                            if (this.rebuildPermissions)
                             {
-                                for (DelayedSchedulerAction delayedAction : this.delayedSchedulerActions)
+                                this.report.info("Rebuilding computed permissions");
+                                db.buildPermissions(this.site.getId());
+                            }
+                            if (this.clearPermissionsCache)
+                            {
+                                this.report.info("Clearing permissions cache");
+                                db.invalidatePermissionsCache(this.site.getId());
+                            }
+                        });
+                        // delayed actions
+                        if (this.online)
+                        {
+                            // we must publish any scheduling changes after we have committed the transaction
+                            // publish all scheduling changes
+                            try (SchedulerQueue queue = SchedulerQueue.open())
+                            {
+                                try (RoutedProducer<SchedulerAction, SchedulerKey> producer = queue.publishSchedulerActions())
                                 {
-                                    producer.publish(delayedAction.key, delayedAction.action);
+                                    for (DelayedSchedulerAction delayedAction : this.delayedSchedulerActions)
+                                    {
+                                        producer.publish(delayedAction.key, delayedAction.action);
+                                    }
                                 }
                             }
-                        }
-                        // we must publish and contact registration notifications
-                        try (NotificationQueue notificationQueue = NotificationQueue.open())
-                        {
-                            try (RoutedProducer<Notification, NotificationKey> notificationsProducer = notificationQueue.publishNotifications())
+                            // we must publish and contact registration notifications
+                            try (NotificationQueue notificationQueue = NotificationQueue.open())
                             {
-                                for (Contact contact : this.delayedContactRegistrations)
+                                try (RoutedProducer<Notification, NotificationKey> notificationsProducer = notificationQueue.publishNotifications())
                                 {
-                                    try
+                                    for (Contact contact : this.delayedContactRegistrations)
                                     {
-                                        // get the registration url
-                                        String url = this.registrationURLSupplier.apply(contact);
-                                        // send a notification, only via email
-                                        notificationsProducer.publish(
-                                                new NotificationKey(contact.getSite().getId()),
-                                                new RegisterContactNotification(contact.getSite().toMOUnsafe(), contact.toMOUnsafe().addEngine("email"), url) 
-                                        );
-                                    }
-                                    catch (Exception e)
-                                    {
-                                        Logger.getLogger(BergamotConfigImporter.class).error("Failed to send registration notification", e);
-                                        throw e;
+                                        try
+                                        {
+                                            // get the registration url
+                                            String url = this.registrationURLSupplier.apply(contact);
+                                            // send a notification, only via email
+                                            notificationsProducer.publish(
+                                                    new NotificationKey(contact.getSite().getId()),
+                                                    new RegisterContactNotification(contact.getSite().toMOUnsafe(), contact.toMOUnsafe().addEngine("email"), url) 
+                                            );
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            Logger.getLogger(BergamotConfigImporter.class).error("Failed to send registration notification", e);
+                                            throw e;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            catch (Throwable e)
-            {
-                Logger.getLogger(BergamotConfigImporter.class).error("Failed to import configuration", e);
-                this.report.error("Configuration change aborted due to unhandled error: " + e.getMessage());
-                StringWriter sw = new StringWriter();
-                e.printStackTrace(new PrintWriter(sw));
-                this.report.error(sw.toString());
+                catch (Throwable e)
+                {
+                    Logger.getLogger(BergamotConfigImporter.class).error("Failed to import configuration", e);
+                    this.report.error("Configuration change aborted due to unhandled error: " + e.getMessage());
+                    StringWriter sw = new StringWriter();
+                    e.printStackTrace(new PrintWriter(sw));
+                    this.report.error(sw.toString());
+                }
             }
         }
         return this.report;
@@ -1067,7 +1080,7 @@ public class BergamotConfigImporter
             notificationEngine.setEnabled(econfiguration.getEnabledBooleanValue());
             notificationEngine.setAlertsEnabled(econfiguration.getAlertsBooleanValue());
             notificationEngine.setRecoveryEnabled(econfiguration.getRecoveryBooleanValue());
-            notificationEngine.setIgnore(econfiguration.getIgnore().stream().map((e) -> {return Status.valueOf(e.toUpperCase()); }).collect(Collectors.toList()));
+            notificationEngine.setIgnore(econfiguration.getIgnore().stream().map(Status::parse).collect(Collectors.toList()));
             if (! Util.isEmpty(econfiguration.getNotificationPeriod()))
             {
                 TimePeriod timePeriod = db.getTimePeriodByName(this.site.getId(), econfiguration.getNotificationPeriod());
@@ -1078,6 +1091,49 @@ public class BergamotConfigImporter
             }
             //
             db.setNotificationEngine(notificationEngine);
+        }
+        // escalations
+        db.removeEscalations(owner);
+        for (EscalateCfg ecfg : configuration.getEscalations())
+        {
+            Escalation esc = new Escalation();
+            esc.setNotificationsId(owner);
+            esc.setAfter(ecfg.getAfterTimeInterval().toMillis());
+            esc.setRenotify(ecfg.getRenotifyBooleanValue());
+            esc.setIgnore(ecfg.getIgnore().stream().map(Status::parse).collect(Collectors.toList()));
+            // load the time period
+            if (! Util.isEmpty(ecfg.getEscalationPeriod()))
+            {
+                TimePeriod timePeriod = db.getTimePeriodByName(this.site.getId(), ecfg.getEscalationPeriod());
+                if (timePeriod != null)
+                {
+                    notifications.setTimePeriodId(timePeriod.getId());
+                }
+            }
+            // notify
+            esc.getTeamIds().clear();
+            esc.getContactIds().clear();
+            if (ecfg.getNotify() != null)
+            {
+                for (String teamName : ecfg.getNotify().getTeams())
+                {
+                    Team team = db.getTeamByName(this.site.getId(), teamName);
+                    if (team != null)
+                    {
+                        esc.getTeamIds().add(team.getId());
+                    }
+                }
+                for (String contactName : ecfg.getNotify().getContacts())
+                {
+                    Contact contact = db.getContactByName(this.site.getId(), contactName);
+                    if (contact != null)
+                    {
+                        esc.getContactIds().add(contact.getId());
+                    }
+                }
+            }
+            // store it
+            db.setEscalation(esc);
         }
     }
 
@@ -1466,13 +1522,24 @@ public class BergamotConfigImporter
         // parse the condition
         if (! Util.isEmpty(resolvedConfiguration.getCondition()))
         {
-            VirtualCheckOperator cond = VirtualCheckExpressionParser.parseVirtualCheckExpression(db.createVirtualCheckContext(this.site.getId()), resolvedConfiguration.getCondition());
+            VirtualCheckOperator cond = VirtualCheckExpressionParser.parseVirtualCheckExpression(resolvedConfiguration.getCondition());
             if (cond != null)
             {
+                // context to use
+                VirtualCheckExpressionContext vcec = db.createVirtualCheckContext(this.site.getId(), null);
+                // validate the condition
+                for (CheckReference chkRef : cond.computeDependencies())
+                {
+                    if (chkRef.resolve(vcec) == null)
+                    {
+                        throw new RuntimeException("The virtual check " + check.getType() + " " + check.getName() + " is referencing checks which do not exist: " + chkRef.toString());
+                    }
+                }
+                // set the condition
                 check.setCondition(cond);
                 this.report.info("Using virtual check condition " + cond.toString() + " for " + check);
                 // cross reference the checks
-                check.setReferenceIds(cond.computeDependencies().stream().map(Check::getId).collect(Collectors.toList()));
+                check.setReferenceIds(new LinkedList<UUID>(cond.computeDependencies().stream().map((c) -> c.resolve(vcec).getId()).collect(Collectors.toSet())));
             }
         }
     }
@@ -1648,6 +1715,47 @@ public class BergamotConfigImporter
         }
         // ensure we flush cached permissions
         this.clearPermissionsCache = true;
+    }
+    
+    protected void linkDependencies(BergamotDB db)
+    {
+        for (List<? extends TemplatedObjectCfg<?>> objects : this.config.getAllObjects())
+        {
+            for (TemplatedObjectCfg<?> object : objects)
+            {
+                if ((! object.getTemplateBooleanValue()) && object instanceof RealCheckCfg<?>)
+                {
+                    RealCheckCfg<?> checkCfg = (RealCheckCfg<?>) object;
+                    if (! Util.isEmpty(checkCfg.getDepends()))
+                    {
+                        // we only need to link dependencies on host and cluster
+                        // as services auto depend on host and resources auto depend on cluster
+                        if (checkCfg instanceof HostCfg)
+                        {
+                            Host host = db.getHostByName(this.site.getId(), checkCfg.getName());
+                            // did we find the check
+                            if (host != null)
+                            {
+                                // parse the dependencies
+                                List<CheckReference> dependsOn = VirtualCheckExpressionParser.parseParentsExpression(checkCfg.getDepends());
+                                // validate the references and link
+                                VirtualCheckExpressionContext vcec = db.createVirtualCheckContext(this.site.getId(), host);
+                                for (CheckReference chkRef : dependsOn)
+                                {
+                                    Check<?,?> dependsOnCheck = chkRef.resolve(vcec);
+                                    if (dependsOnCheck == null) throw new RuntimeException("The check " + checkCfg.getName() + " depends upon the check " + chkRef + " which does not exist");
+                                    host.getDependsIds().add(dependsOnCheck.getId());
+                                }
+                                //
+                                this.report.info("The check " + checkCfg.getName() + "(" + host.getId() + ") depends upon " + host.getDependsIds());
+                                // update
+                                db.setCheck(host);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     
     /**

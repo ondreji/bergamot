@@ -15,13 +15,13 @@ public class AlertMO extends MessageObject implements CommentedMO
      */
     @JsonProperty("id")
     private UUID id;
-    
+
     /**
      * The check this alert is for
      */
     @JsonProperty("check")
     private CheckMO check;
-    
+
     /**
      * When the alert was raised
      */
@@ -143,15 +143,29 @@ public class AlertMO extends MessageObject implements CommentedMO
      */
     @JsonProperty("recovered_at")
     private long recoveredAt;
-    
+
     @JsonProperty("comments")
     private List<CommentMO> comments = new LinkedList<CommentMO>();
+
+    @JsonProperty("escalated")
+    private boolean escalated;
+
+    @JsonProperty("escalated_at")
+    private long escalatedAt;
+
+    @JsonProperty("escalations")
+    private List<AlertEscalationMO> escalations = new LinkedList<AlertEscalationMO>();
+
+    @JsonProperty("notified")
+    private List<ContactMO> notified = new LinkedList<ContactMO>();
     
+    @JsonProperty("encompassed")
+    private List<AlertEncompassesMO> encompassed = new LinkedList<AlertEncompassesMO>();
+
     public AlertMO()
     {
         super();
     }
-
 
     public UUID getId()
     {
@@ -379,10 +393,59 @@ public class AlertMO extends MessageObject implements CommentedMO
         return comments;
     }
 
-
     @Override
     public void setComments(List<CommentMO> comments)
     {
         this.comments = comments;
+    }
+
+    public boolean isEscalated()
+    {
+        return escalated;
+    }
+
+    public void setEscalated(boolean escalated)
+    {
+        this.escalated = escalated;
+    }
+
+    public long getEscalatedAt()
+    {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(long escalatedAt)
+    {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public List<AlertEscalationMO> getEscalations()
+    {
+        return escalations;
+    }
+
+    public void setEscalations(List<AlertEscalationMO> escalations)
+    {
+        this.escalations = escalations;
+    }
+
+    public List<ContactMO> getNotified()
+    {
+        return notified;
+    }
+
+    public void setNotified(List<ContactMO> notified)
+    {
+        this.notified = notified;
+    }
+
+    public List<AlertEncompassesMO> getEncompassed()
+    {
+        return encompassed;
+    }
+
+    public void setEncompassed(List<AlertEncompassesMO> encompassed)
+    {
+        this.encompassed = encompassed;
     }
 }

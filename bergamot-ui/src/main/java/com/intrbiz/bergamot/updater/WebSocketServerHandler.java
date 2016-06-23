@@ -143,11 +143,11 @@ public class WebSocketServerHandler extends SimpleChannelInboundHandler<Object>
         try
         {
             this.authenticateContext(req);
-            logger.info("Authenticated websock connection for principal: " + this.context.getPrincipal());
+            logger.debug("Authenticated websock connection for principal: " + this.context.getPrincipal());
         }
         catch (BalsaSecurityException e)
         {
-            logger.error("Denying access for websocket", e);
+            logger.warn("Denying access for websocket", e);
             sendHttpResponse(ctx, req, new DefaultFullHttpResponse(HTTP_1_1, FORBIDDEN));
             return;
         }
@@ -164,6 +164,7 @@ public class WebSocketServerHandler extends SimpleChannelInboundHandler<Object>
         }
     }
 
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     private void handleWebSocketFrame(final ChannelHandlerContext ctx, WebSocketFrame frame)
     {
         if (frame instanceof CloseWebSocketFrame)
@@ -187,10 +188,24 @@ public class WebSocketServerHandler extends SimpleChannelInboundHandler<Object>
                 // process the request
                 if (request instanceof APIRequest)
                 {
+                    APIRequest apiRequest = (APIRequest) request;
                     // process the request
-                    RequestHandler handler = this.server.getHandler(request.getClass());
-                    if (handler != null) handler.onRequest(this.context, (APIRequest) request);
-                    else ctx.channel().writeAndFlush(new TextWebSocketFrame(this.transcoder.encodeAsString(new APIError("Not found"))));
+                    RequestHandler<?> handler = this.server.getHandler(request.getClass());
+                    if (handler != null)
+                    {
+                        try
+                        {
+                            ((RequestHandler) handler).onRequest(this.context, apiRequest);
+                        }
+                        catch (Exception e)
+                        {
+                            ctx.channel().writeAndFlush(new TextWebSocketFrame(this.transcoder.encodeAsString(new APIError(apiRequest, e.getMessage()))));            
+                        }
+                    }
+                    else
+                    {
+                        ctx.channel().writeAndFlush(new TextWebSocketFrame(this.transcoder.encodeAsString(new APIError(apiRequest, "Not found"))));
+                    }
                 }
                 else
                 {

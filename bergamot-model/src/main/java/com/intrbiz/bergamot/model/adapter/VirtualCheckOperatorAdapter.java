@@ -1,8 +1,7 @@
 package com.intrbiz.bergamot.model.adapter;
 
-import com.intrbiz.bergamot.data.BergamotDB;
-import com.intrbiz.bergamot.model.virtual.VirtualCheckOperator;
 import com.intrbiz.bergamot.virtual.VirtualCheckExpressionParser;
+import com.intrbiz.bergamot.virtual.operator.VirtualCheckOperator;
 import com.intrbiz.data.db.util.DBTypeAdapter;
 
 public class VirtualCheckOperatorAdapter implements DBTypeAdapter<String, VirtualCheckOperator>
@@ -17,10 +16,6 @@ public class VirtualCheckOperatorAdapter implements DBTypeAdapter<String, Virtua
     public VirtualCheckOperator fromDB(String value)
     {
         if (value == null) return null;
-        try (BergamotDB db = BergamotDB.connect())
-        {
-            // exploit the fact we always serialise to UUIDs
-            return VirtualCheckExpressionParser.parseVirtualCheckExpression(db.createVirtualCheckContext(null), value);
-        }
+        return VirtualCheckExpressionParser.parseVirtualCheckExpression(value);
     }
 }

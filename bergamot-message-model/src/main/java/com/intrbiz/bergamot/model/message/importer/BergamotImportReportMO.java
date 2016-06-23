@@ -25,6 +25,14 @@ public class BergamotImportReportMO extends MessageObject
     public BergamotImportReportMO()
     {
     }
+    
+    public BergamotImportReportMO(String site, boolean successful, List<String> info, List<String> errors)
+    {
+        this.site = site;
+        this.successful = successful;
+        this.info.addAll(info);
+        this.errors.addAll(errors);
+    }
 
     public String getSite()
     {

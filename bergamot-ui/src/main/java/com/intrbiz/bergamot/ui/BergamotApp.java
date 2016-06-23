@@ -2,12 +2,17 @@ package com.intrbiz.bergamot.ui;
 
 import java.util.UUID;
 
+import com.intrbiz.accounting.AccountingManager;
 import com.intrbiz.balsa.BalsaApplication;
 import com.intrbiz.balsa.engine.impl.session.HazelcastSessionEngine;
 import com.intrbiz.balsa.util.Util;
+import com.intrbiz.bergamot.accounting.BergamotAccountingQueueConsumer;
+import com.intrbiz.bergamot.accounting.consumer.BergamotLoggingConsumer;
 import com.intrbiz.bergamot.cluster.ClusterManager;
 import com.intrbiz.bergamot.config.UICfg;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.health.HealthAgent;
+import com.intrbiz.bergamot.health.HealthTracker;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.ui.action.BergamotAgentActions;
 import com.intrbiz.bergamot.ui.action.CheckActions;
@@ -40,6 +45,8 @@ import com.intrbiz.bergamot.ui.api.TestAPIRouter;
 import com.intrbiz.bergamot.ui.api.TimePeriodAPIRouter;
 import com.intrbiz.bergamot.ui.api.TrapAPIRouter;
 import com.intrbiz.bergamot.ui.api.UtilAPIRouter;
+import com.intrbiz.bergamot.ui.express.BergamotCSSVersion;
+import com.intrbiz.bergamot.ui.express.BergamotJSVersion;
 import com.intrbiz.bergamot.ui.express.BergamotUpdateURL;
 import com.intrbiz.bergamot.ui.router.AboutRouter;
 import com.intrbiz.bergamot.ui.router.AlertsRouter;
@@ -77,6 +84,7 @@ import com.intrbiz.bergamot.ui.router.admin.TimePeriodAdminRouter;
 import com.intrbiz.bergamot.ui.router.admin.TrapAdminRouter;
 import com.intrbiz.bergamot.ui.router.admin.UtilsAdminRouter;
 import com.intrbiz.bergamot.ui.router.agent.AgentRouter;
+import com.intrbiz.bergamot.ui.router.command.CommandEditorRouter;
 import com.intrbiz.bergamot.ui.security.BergamotSecurityEngine;
 import com.intrbiz.bergamot.updater.UpdateServer;
 import com.intrbiz.configuration.Configurable;
@@ -96,9 +104,18 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
 {   
     public static final class VERSION
     {
-        public static final String NUMBER = "2.0.0";
+        public static final String NUMBER = "3.0.0";
         
-        public static final String CODE_NAME = "Yellow Sun";
+        public static final String CODE_NAME = "Red Snow";
+        
+        public static final class COMPONENTS
+        {
+        
+            public static final String JS = "v1.5.0";
+            
+            public static final String CSS = "v1.7.0";
+        
+        }
     }
     
     private UICfg config;
@@ -143,6 +160,10 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
          * serialising Apache Log4J Loggers
          * taskEngine(new HazelcastTaskEngine());
          */
+        // setup healthcheck tracker
+        HealthTracker.getInstance().init();
+        // setup healthcheck agent
+        HealthAgent.getInstance().init("bergamot-ui");
         // session engine
         sessionEngine(new HazelcastSessionEngine());
         // security engine
@@ -153,6 +174,11 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
             // set the key
             this.getSecurityEngine().applicationKey(SecretKey.fromString(this.getConfiguration().getSecurityKey()));
         }
+        // setup accounting
+        AccountingManager.getInstance().registerConsumer("logger", new BergamotLoggingConsumer());
+        AccountingManager.getInstance().registerConsumer("queue", new BergamotAccountingQueueConsumer());
+        AccountingManager.getInstance().bindRootConsumer("logger");
+        AccountingManager.getInstance().bindRootConsumer("queue");
         // setup ClusterManager to manage our critical
         // resources across the cluster
         this.clusterManager = new ClusterManager();
@@ -160,6 +186,8 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
         this.updateServer = new UpdateServer(Integer.getInteger("bergamot.websocket.port", 8081));
         // express functions
         immutableFunction(new BergamotUpdateURL());
+        immutableFunction(new BergamotJSVersion());
+        immutableFunction(new BergamotCSSVersion());
         // some actions
         action(new ExecuteCheckAction());
         action(new SchedulerActions());
@@ -210,6 +238,8 @@ public class BergamotApp extends BalsaApplication implements Configurable<UICfg>
         router(new SiteAdminRouter());
         router(new UtilsAdminRouter());
         router(new SecurityDomainAdminRouter());
+        // Command Editor
+        router(new CommandEditorRouter());
         // API
         router(new APIRouter());
         router(new MetricsAPIRouter());

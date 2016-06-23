@@ -8,8 +8,11 @@ import java.util.stream.Collectors;
 
 import org.apache.log4j.Logger;
 
+import com.intrbiz.accounting.Accounting;
 import com.intrbiz.balsa.engine.route.Router;
 import com.intrbiz.balsa.metadata.WithDataAdapter;
+import com.intrbiz.bergamot.accounting.model.AccountingNotificationType;
+import com.intrbiz.bergamot.accounting.model.SendNotificationAccountingEvent;
 import com.intrbiz.bergamot.data.BergamotDB;
 import com.intrbiz.bergamot.metadata.IgnoreBinding;
 import com.intrbiz.bergamot.metadata.IsaObjectId;
@@ -55,6 +58,8 @@ public class AlertsAPIRouter extends Router<BergamotApp>
     private UpdateQueue updateQueue;
     
     private RoutedProducer<Update, UpdateKey> updateProducer;
+    
+    private Accounting accounting = Accounting.create(AlertsAPIRouter.class);
     
     public AlertsAPIRouter()
     {
@@ -131,6 +136,7 @@ public class AlertsAPIRouter extends Router<BergamotApp>
                 alert.setAcknowledgedAt(new Timestamp(System.currentTimeMillis()));
                 alert.setAcknowledgedById(contact.getId());
                 db.setAlert(alert);
+                db.acknowledgeCheck(alert.getCheckId(), true);
             });
             // send acknowledge notifications
             if (! alert.getCheck().getState().isSuppressedOrInDowntime())
@@ -140,6 +146,8 @@ public class AlertsAPIRouter extends Router<BergamotApp>
                 {
                     logger.warn("Sending acknowledge for " + alert.getId());
                     this.notificationsProducer.publish(new NotificationKey(contact.getSite().getId()), sendAck);
+                    // accounting
+                    this.accounting.account(new SendNotificationAccountingEvent(alert.getSiteId(), alert.getId(), alert.getCheckId(), AccountingNotificationType.ACKNOWLEDGEMENT, sendAck.getTo().size(), 0, null));
                 }
                 else
                 {

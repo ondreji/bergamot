@@ -15,6 +15,7 @@ import com.intrbiz.bergamot.agent.manager.config.BergamotAgentManagerCfg;
 import com.intrbiz.bergamot.agent.manager.signer.CertificateManager;
 import com.intrbiz.bergamot.agent.manager.store.BergamotKeyStore;
 import com.intrbiz.bergamot.crypto.util.PEMUtil;
+import com.intrbiz.bergamot.health.HealthAgent;
 import com.intrbiz.bergamot.model.message.agent.manager.AgentManagerRequest;
 import com.intrbiz.bergamot.model.message.agent.manager.AgentManagerResponse;
 import com.intrbiz.bergamot.model.message.agent.manager.request.CreateSiteCA;
@@ -24,6 +25,7 @@ import com.intrbiz.bergamot.model.message.agent.manager.request.GetServer;
 import com.intrbiz.bergamot.model.message.agent.manager.request.GetSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.request.SignAgent;
 import com.intrbiz.bergamot.model.message.agent.manager.request.SignServer;
+import com.intrbiz.bergamot.model.message.agent.manager.request.SignTemplate;
 import com.intrbiz.bergamot.model.message.agent.manager.response.AgentManagerError;
 import com.intrbiz.bergamot.model.message.agent.manager.response.CreatedSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.response.GotAgent;
@@ -31,6 +33,7 @@ import com.intrbiz.bergamot.model.message.agent.manager.response.GotRootCA;
 import com.intrbiz.bergamot.model.message.agent.manager.response.GotSiteCA;
 import com.intrbiz.bergamot.model.message.agent.manager.response.SignedAgent;
 import com.intrbiz.bergamot.model.message.agent.manager.response.SignedServer;
+import com.intrbiz.bergamot.model.message.agent.manager.response.SignedTemplate;
 import com.intrbiz.bergamot.queue.BergamotAgentManagerQueue;
 import com.intrbiz.configuration.Configurable;
 import com.intrbiz.configuration.Configuration;
@@ -84,9 +87,13 @@ public class BergamotAgentManager implements Configurable<BergamotAgentManagerCf
     {
         // ensure we have a root cert
         this.certificateManager.generateRootCA();
+        // verify the keystore
+        this.keyStore.check();
         // setup the RPC server
         this.queue  = BergamotAgentManagerQueue.open();
         this.server = this.queue.createBergamotAgentManagerRPCServer(this);
+        // start the health agent
+        HealthAgent.getInstance().init("bergamot-agent-manager");
         // whoo all up
         logger.info("Bergamot Agent Manager started!");
     }
@@ -138,6 +145,14 @@ public class BergamotAgentManager implements Configurable<BergamotAgentManagerCf
                 Certificate cert = this.certificateManager.signServer(sign.getCommonName(), PEMUtil.loadPublicKey(sign.getPublicKeyPEM()));
                 // respond
                 return new SignedServer(PEMUtil.saveCertificate(cert));
+            }
+            else if (event instanceof SignTemplate)
+            {
+                SignTemplate sign = (SignTemplate) event;
+                // sign the agent 
+                Certificate cert = this.certificateManager.signTemplate(sign.getSiteId(), sign.getId(), sign.getTemplateName(), PEMUtil.loadPublicKey(sign.getPublicKeyPEM()));
+                // respond
+                return new SignedTemplate(PEMUtil.saveCertificate(cert));
             }
         }
         catch (Exception e)

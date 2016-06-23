@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.apache.log4j.Logger;
@@ -11,9 +12,12 @@ import org.apache.log4j.Logger;
 import com.intrbiz.bergamot.config.EngineCfg;
 import com.intrbiz.bergamot.config.ExecutorCfg;
 import com.intrbiz.bergamot.model.message.check.ExecuteCheck;
+import com.intrbiz.bergamot.model.message.command.CommandRequest;
+import com.intrbiz.bergamot.model.message.command.CommandResponse;
 import com.intrbiz.bergamot.model.message.reading.ReadingParcelMO;
 import com.intrbiz.bergamot.model.message.result.ActiveResultMO;
 import com.intrbiz.bergamot.model.message.result.ResultMO;
+import com.intrbiz.bergamot.queue.BergamotCommandQueue;
 import com.intrbiz.bergamot.queue.WorkerQueue;
 import com.intrbiz.bergamot.queue.key.ActiveResultKey;
 import com.intrbiz.bergamot.queue.key.AgentBinding;
@@ -24,7 +28,9 @@ import com.intrbiz.bergamot.worker.Worker;
 import com.intrbiz.queue.Consumer;
 import com.intrbiz.queue.DeliveryHandler;
 import com.intrbiz.queue.QueueException;
+import com.intrbiz.queue.RPCClient;
 import com.intrbiz.queue.RoutedProducer;
+import com.intrbiz.queue.name.RoutingKey;
 
 public class AbstractEngine implements Engine, DeliveryHandler<ExecuteCheck>
 {
@@ -45,6 +51,10 @@ public class AbstractEngine implements Engine, DeliveryHandler<ExecuteCheck>
     protected RoutedProducer<ResultMO, ResultKey> resultProducer;
     
     protected RoutedProducer<ReadingParcelMO, ReadingKey> readingProducer;
+    
+    private BergamotCommandQueue commandQueue;
+    
+    private RPCClient<CommandRequest, CommandResponse, RoutingKey> commandRPCClient;
 
     public AbstractEngine(final String name)
     {
@@ -144,10 +154,18 @@ public class AbstractEngine implements Engine, DeliveryHandler<ExecuteCheck>
         }
         this.publishResult(new ActiveResultKey(task.getSiteId(), task.getProcessingPool()), new ActiveResultMO().fromCheck(task).error("No executor found to execute check"));
     }
+    
+    protected void startEngineServices() throws Exception
+    {
+    }
 
     @Override
     public void start() throws Exception
     {
+        // open the command queue
+        this.commandQueue = BergamotCommandQueue.open();
+        // create an RPC client
+        this.commandRPCClient = this.commandQueue.createBergamotCommandRPCClient();
         // open the queue
         this.queue = WorkerQueue.open();
         // the result producer
@@ -159,6 +177,8 @@ public class AbstractEngine implements Engine, DeliveryHandler<ExecuteCheck>
         {
             ex.start();
         }
+        // start any services needed for this engine
+        this.startEngineServices();
         // start all the consumers
         for (int i = 0; i < this.getWorker().getConfiguration().getThreads(); i ++)
         {
@@ -204,10 +224,15 @@ public class AbstractEngine implements Engine, DeliveryHandler<ExecuteCheck>
     }
 
     @Override
-    public void handleDevliery(ExecuteCheck event) throws IOException
+    public void handleDevliery(Map<String, Object> headers, ExecuteCheck event) throws IOException
     {
         if (logger.isTraceEnabled())
             logger.trace("Got task: " + event);
         this.execute(event);
+    }
+    
+    public RPCClient<CommandRequest, CommandResponse, RoutingKey> getCommandRPCClient()
+    {
+        return this.commandRPCClient;
     }
 }

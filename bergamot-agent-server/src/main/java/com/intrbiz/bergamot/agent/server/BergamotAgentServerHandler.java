@@ -4,24 +4,6 @@ import static io.netty.handler.codec.http.HttpHeaders.*;
 import static io.netty.handler.codec.http.HttpHeaders.Names.*;
 import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static io.netty.handler.codec.http.HttpVersion.*;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.handler.codec.http.DefaultFullHttpResponse;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.FullHttpResponse;
-import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
-import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
-import io.netty.util.CharsetUtil;
 
 import java.net.SocketAddress;
 import java.security.Principal;
@@ -44,6 +26,30 @@ import com.intrbiz.bergamot.model.message.agent.error.GeneralError;
 import com.intrbiz.bergamot.model.message.agent.hello.AgentHello;
 import com.intrbiz.bergamot.model.message.agent.ping.AgentPing;
 import com.intrbiz.bergamot.model.message.agent.ping.AgentPong;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationFailed;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationFailed.ErrorCode;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationMessage;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationRequest;
+import com.intrbiz.bergamot.model.message.agent.registration.AgentRegistrationRequired;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.PingWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.PongWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
+import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
+import io.netty.util.CharsetUtil;
 
 
 public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Object>
@@ -76,9 +82,15 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
     
     private CertInfo siteCertificateInfo;
     
+    private SerialNum agentSerial;
+    
+    private SerialNum siteSerial;
+    
     private UUID agentId;
     
     private UUID siteId;
+    
+    private AgentVerificationResult certificateVerification;
     
     public BergamotAgentServerHandler(BergamotAgentServer server, SSLEngine engine)
     {
@@ -191,10 +203,13 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
             return;
         }
         // validate the certificate
-        if (this.validateAgentCertificate(this.engine.getSession().getPeerPrincipal(), this.engine.getSession().getPeerCertificates()))
+        // allow the WebSocket channel to open even if the certificate presented 
+        // is a template certificate this allows the registration protocol to happen
+        this.certificateVerification = this.validateAgentCertificate(this.engine.getSession().getPeerPrincipal(), this.engine.getSession().getPeerCertificates()); 
+        if (this.certificateVerification == AgentVerificationResult.GOOD || this.certificateVerification == AgentVerificationResult.TEMPLATE)
         {
             // got a good client certificate, start the WS handshake
-            logger.trace("Handshaking websocket request url: " + req.getUri());
+            if (logger.isTraceEnabled()) logger.trace("Handshaking websocket request url: " + req.getUri());
             WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(getWebSocketLocation(req), null, false);
             this.handshaker = wsFactory.newHandshaker(req);
             if (this.handshaker == null)
@@ -245,17 +260,68 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
     
     private void processMessage(final ChannelHandlerContext ctx, final AgentMessage request) throws Exception
     {
+        if (this.certificateVerification == AgentVerificationResult.GOOD)
+        {
+            // allow the full agent protocol
+            this.processAgentMessage(ctx, request);
+        }
+        else if (this.certificateVerification == AgentVerificationResult.TEMPLATE)
+        {
+            this.processRegistrationMessage(ctx, request);
+        }
+        else
+        {
+            // should never get here
+            throw new IllegalStateException("WebSocket established given a bad certificate, not processing messaged");
+        }
+    }
+    
+    private void processRegistrationMessage(final ChannelHandlerContext ctx, final AgentMessage request) throws Exception
+    {
+        if (request instanceof AgentRegistrationMessage)
+        {
+            if (request instanceof AgentRegistrationRequest)
+            {
+                // start the registration process
+                this.server.requestAgentRegistration(this.agentSerial.getId(), (AgentRegistrationRequest) request, (response) -> {
+                    try
+                    {
+                        if (response != null)
+                        {
+                            writeMessage(ctx, response);
+                        }
+                        else
+                        {
+                            writeMessage(ctx, new AgentRegistrationFailed(request, ErrorCode.NOT_AVAILABLE, null));
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        ctx.fireExceptionCaught(e);
+                    }
+                });
+            }
+        }
+        else
+        {
+            // tell the agent it needs to register
+            writeMessage(ctx, new AgentRegistrationRequired(request));
+        }
+    }
+    
+    private void processAgentMessage(final ChannelHandlerContext ctx, final AgentMessage request) throws Exception
+    {
         if (request instanceof AgentHello)
         {
             this.hello = (AgentHello) request;
             this.remoteAddress = ctx.channel().remoteAddress();
-            logger.info("Got hello from " + this.remoteAddress + " " + this.agentId + " " + this.agentCertificateInfo.getSubject().getCommonName());
+            if (logger.isInfoEnabled()) logger.info("Got hello from " + this.remoteAddress + " " + this.agentId + " " + this.agentCertificateInfo.getSubject().getCommonName());
             // register ourselves
             this.server.registerAgent(this);
         }
         else if (request instanceof AgentPing)
         {
-            logger.debug("Got ping from agent");
+            if (logger.isTraceEnabled()) logger.trace("Got ping from agent");
             this.server.fireAgentPing(this);
             writeMessage(ctx, new AgentPong((AgentPing) request));
         }
@@ -268,7 +334,7 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
             }
             else
             {
-                logger.debug("Got pong from agent");
+                if (logger.isInfoEnabled()) logger.trace("Got pong from agent");
             }
         }
         else
@@ -316,6 +382,8 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
         }
     }
     
+    public enum AgentVerificationResult { GOOD, BAD, TEMPLATE }
+    
     /**
      * Validate the agent client auth certificate.
      * 
@@ -329,13 +397,13 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
      * @param clientPrincipal
      * @param clientCertificates
      */
-    private boolean validateAgentCertificate(Principal clientPrincipal, Certificate[] clientCertificates)
+    private AgentVerificationResult validateAgentCertificate(Principal clientPrincipal, Certificate[] clientCertificates)
     {
         // assert that we have a certificate
         if (clientPrincipal == null || clientCertificates == null || clientCertificates.length < 2)
         {
-            logger.debug("Invalid agent certificate chain, not valid!");
-            return false;
+            if (logger.isDebugEnabled()) logger.debug("Invalid agent certificate chain, not valid!");
+            return AgentVerificationResult.BAD;
         }
         try
         {
@@ -350,18 +418,37 @@ public class BergamotAgentServerHandler extends SimpleChannelInboundHandler<Obje
             this.siteCertificate = clientCertificates[1];
             this.siteCertificateInfo = CertInfo.fromCertificate(this.siteCertificate);
             // check the serial numbers
-            this.agentId = SerialNum.fromBigInt(((X509Certificate) this.agentCertificate).getSerialNumber()).getId();
-            this.siteId  = SerialNum.fromBigInt(((X509Certificate) this.siteCertificate).getSerialNumber()).getId();
-            // TODO: validate that the Agent Id is masked by the Site Id
+            this.agentSerial = SerialNum.fromBigInt(((X509Certificate) this.agentCertificate).getSerialNumber());
+            this.agentId = this.agentSerial.getId();
+            this.siteSerial  = SerialNum.fromBigInt(((X509Certificate) this.siteCertificate).getSerialNumber());
+            this.siteId = this.siteSerial.getId();
+            // validate that the Agent Id is masked by the Site Id
+            if ((this.agentId.getMostSignificantBits() & 0xFFFFFFFF_FFFF0000L) != (this.siteId.getMostSignificantBits() & 0xFFFFFFFF_FFFF0000L))
+            {
+                logger.warn("The agent id " + this.agentId + " is not masked by the site id " + this.siteId + ", refusing: " + this.agentCertificateInfo.getSubject().getCommonName());
+                return AgentVerificationResult.BAD;
+            }
+            // is the presented certificate a template rather than an actual agent
+            if (this.agentSerial.isVersion2() && this.agentSerial.isTemplate())
+            {
+                logger.info("Got agent connection with template id: " + this.agentId);
+                return AgentVerificationResult.TEMPLATE;
+            }
+            // assert that the agent serial number is an actual agent
+            if (this.agentSerial.isVersion2() && (! this.agentSerial.isAgent()))
+            {
+                logger.warn("The agent id " + this.agentId + " has the wrong mode");
+                return AgentVerificationResult.BAD;
+            }
             // log
-            logger.info("Connection from client: " + this.agentCertificateInfo.getSubject().getCommonName() + " of site " + this.siteCertificateInfo.getSubject().getCommonName());
-            return true;
+            if (logger.isInfoEnabled()) logger.info("Connection from client: " + this.agentCertificateInfo.getSubject().getCommonName() + " of site " + this.siteCertificateInfo.getSubject().getCommonName());
+            return AgentVerificationResult.GOOD;
         }
         catch (Exception e)
         {
             logger.error("Error validating client certificate", e);
         }
-        return false;
+        return AgentVerificationResult.BAD;
     }
 
     @Override

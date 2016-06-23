@@ -3,23 +3,38 @@ package com.intrbiz.bergamot.result;
 import java.sql.Timestamp;
 import java.util.Calendar;
 import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Set;
 import java.util.Stack;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.apache.log4j.Logger;
 
 import com.intrbiz.Util;
+import com.intrbiz.accounting.Accounting;
+import com.intrbiz.bergamot.accounting.model.AccountingNotificationType;
+import com.intrbiz.bergamot.accounting.model.ProcessResultAccountingEvent;
+import com.intrbiz.bergamot.accounting.model.ProcessResultAccountingEvent.ResultType;
+import com.intrbiz.bergamot.accounting.model.SendNotificationAccountingEvent;
 import com.intrbiz.bergamot.data.BergamotDB;
 import com.intrbiz.bergamot.model.ActiveCheck;
 import com.intrbiz.bergamot.model.Alert;
+import com.intrbiz.bergamot.model.AlertEncompasses;
+import com.intrbiz.bergamot.model.AlertEscalation;
 import com.intrbiz.bergamot.model.Check;
+import com.intrbiz.bergamot.model.Contact;
+import com.intrbiz.bergamot.model.Escalation;
 import com.intrbiz.bergamot.model.Group;
 import com.intrbiz.bergamot.model.Host;
 import com.intrbiz.bergamot.model.Location;
+import com.intrbiz.bergamot.model.NotificationType;
 import com.intrbiz.bergamot.model.RealCheck;
+import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.model.Status;
 import com.intrbiz.bergamot.model.VirtualCheck;
+import com.intrbiz.bergamot.model.message.ContactMO;
 import com.intrbiz.bergamot.model.message.check.ExecuteCheck;
 import com.intrbiz.bergamot.model.message.notification.SendAlert;
 import com.intrbiz.bergamot.model.message.notification.SendRecovery;
@@ -36,12 +51,15 @@ import com.intrbiz.bergamot.model.state.CheckStats;
 import com.intrbiz.bergamot.model.state.CheckTransition;
 import com.intrbiz.bergamot.result.matcher.Matcher;
 import com.intrbiz.bergamot.result.matcher.Matchers;
+import com.intrbiz.bergamot.virtual.VirtualCheckExpressionContext;
 
 public class DefaultResultProcessor extends AbstractResultProcessor
 {
     private Logger logger = Logger.getLogger(DefaultResultProcessor.class);
     
     private Matchers matchers = new Matchers();
+    
+    private Accounting accounting = Accounting.create(DefaultResultProcessor.class);
 
     public DefaultResultProcessor()
     {
@@ -108,6 +126,20 @@ public class DefaultResultProcessor extends AbstractResultProcessor
     {
         // stamp in processed time
         resultMO.setProcessed(System.currentTimeMillis());
+        // is this an adhoc result
+        if (resultMO.getAdhocId() != null)
+        {
+            if (logger.isTraceEnabled())
+            {
+                logger.trace("Got adhoc result, result processing will be skipped");
+                logger.trace(resultMO);
+            }
+            // rather than processing this result we should 
+            // dispatch it to the adhoc originator
+            this.publishAdhocResult(resultMO);
+            // skip any processing
+            return;
+        }
         // start the transaction
         try (BergamotDB db = BergamotDB.connect())
         {
@@ -119,6 +151,10 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                     logger.warn("Failed to match result to a real check: " + resultMO.getId() + ", discarding!");
                     return;
                 }
+                // account this processing
+                // account
+                this.accounting.account(new ProcessResultAccountingEvent(check.getSiteId(), resultMO.getId(), check.getId(), resultMO instanceof ActiveResultMO ? ResultType.ACTIVE : ResultType.PASSIVE));
+                // only process for enabled checks
                 if (!check.isEnabled())
                 {
                     logger.warn("Discarding result " + resultMO.getId() + " for " + check.getType() + "::" + check.getId() + " because it is disabled.");
@@ -132,6 +168,8 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 db.logCheckTransition(transition.toCheckTransition(check.getSite().randomObjectId(), check.getId(), new Timestamp(resultMO.getProcessed())));
                 // update the check state
                 db.setCheckState(transition.nextState);
+                // make our state available as soon as possible
+                db.commit();
                 // compute the check stats
                 if (resultMO instanceof ActiveResultMO)
                 {
@@ -147,9 +185,8 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                         }
                     }
                 }
-                db.commit();
                 // reschedule active checks if we have changed state at all
-                if ((check instanceof ActiveCheck) && (transition.stateChange || transition.hardChange))
+                if ((check instanceof ActiveCheck) && transition.hasSchedulingChanged())
                 {
                     // inform the scheduler to reschedule this check
                     long interval = ((ActiveCheck<?,?>) check).computeCurrentInterval(transition.nextState);
@@ -159,15 +196,7 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 // send the general state update notifications
                 this.sendCheckStateUpdate(db, check, transition);
                 // send group updates
-                if (
-                        transition.stateChange || 
-                        transition.hardChange || 
-                        transition.alert || 
-                        transition.recovery || 
-                        transition.nextState.getStatus() != transition.previousState.getStatus() || 
-                        transition.nextState.isInDowntime() != transition.previousState.isInDowntime() || 
-                        transition.nextState.isSuppressed() != transition.previousState.isSuppressed()
-                )
+                if (transition.hasChanged())
                 {
                     // group update
                     this.sendGroupStateUpdate(db, check, transition);
@@ -185,6 +214,16 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 else if (transition.recovery)
                 {
                     this.sendRecovery(check, db);
+                }
+                else if (transition.hasGotWorse())
+                {
+                    // we should send another alert notification as the situation has gotten worse
+                    this.resendAlert(check, db);
+                }
+                else if (transition.previousState.isHardNotOk() && transition.nextState.isHardNotOk())
+                {
+                    // we are in a hard not ok state, we should check the escalation policies
+                    this.processEscalation(check, db);
                 }
                 // update any virtual checks
                 this.updateVirtualChecks(check, transition, resultMO, db);
@@ -271,6 +310,8 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 {
                     logger.warn("Sending recovery for " + check);
                     this.publishNotification(check, recovery);
+                    // accounting
+                    this.accounting.account(new SendNotificationAccountingEvent(check.getSiteId(), alertRecord.getId(), check.getId(), AccountingNotificationType.RECOVERY, recovery.getTo().size(), 0, null));
                 }
                 else
                 {
@@ -285,19 +326,23 @@ public class DefaultResultProcessor extends AbstractResultProcessor
     protected void sendAlert(Check<?, ?> check, BergamotDB db)
     {
         logger.warn("Alert for " + check);
-        if (! check.getState().isSuppressedOrInDowntime())
+        CheckState state = check.getState();
+        if (! (state.isSuppressedOrInDowntime() || state.isEncompassed()))
         {
+            Calendar now = Calendar.getInstance();
+            // compute the contacts who should be notified
+            List<ContactMO> to = check.getContactsToNotify(NotificationType.ALERT, state.getStatus(), now);
             // record the alert
-            Alert alertRecord = new Alert(check, check.getState());
+            Alert alertRecord = new Alert(check, state, to);
             db.setAlert(alertRecord);
             // send the notifications
-            Calendar now = Calendar.getInstance();
-            // send
-            SendAlert alert = alertRecord.createAlertNotification(now);
+            SendAlert alert = alertRecord.createAlertNotification(now, to);
             if (alert != null && (! alert.getTo().isEmpty()))
             {
                 logger.warn("Sending alert for " + check);
                 this.publishNotification(check, alert);
+                // accounting
+                this.accounting.account(new SendNotificationAccountingEvent(check.getSiteId(), alertRecord.getId(), check.getId(), AccountingNotificationType.ALERT, alert.getTo().size(), 0, null));
             }
             else
             {
@@ -305,6 +350,136 @@ public class DefaultResultProcessor extends AbstractResultProcessor
             }
             // publish alert update
             this.publishAlertUpdate(alertRecord, new AlertUpdate(alertRecord.toMOUnsafe()));
+        }
+        else if (state.isEncompassed())
+        {
+            Alert encompassingAlert = state.getCurrentAlert();
+            // tag this check into the alert for the dependency
+            if (encompassingAlert != null && (! check.getId().equals(encompassingAlert.getCheckId())))
+            {
+                db.setAlertEncompasses(new AlertEncompasses(encompassingAlert.getId(), check.getId(), new Timestamp(System.currentTimeMillis())));
+            }
+            else
+            {
+                logger.warn("Failed to find alert which encompasses alert for check " + check.getType() + "::" + check.getId());
+            }
+        }
+    }
+    
+    protected void resendAlert(Check<?, ?> check, BergamotDB db)
+    {
+        // get the alert information
+        Alert alertRecord = db.getCurrentAlertForCheck(check.getId());
+        if (alertRecord != null && (! alertRecord.isAcknowledged()) && (! alertRecord.isRecovered()) && check.getId().equals(alertRecord.getCheckId()))
+        {
+            logger.warn("Resending notifications for alert " + alertRecord.getId());
+            CheckState state = check.getState();
+            if (! state.isSuppressedOrInDowntime())
+            {
+                Calendar now = Calendar.getInstance();
+                // compute the contacts who should be notified
+                List<ContactMO> to = alertRecord.getContactsToNotify(now);
+                // send the notifications
+                SendAlert alert = alertRecord.createAlertNotification(now, to);
+                if (alert != null && (! alert.getTo().isEmpty()))
+                {
+                    logger.warn("Sending alert for " + check);
+                    this.publishNotification(check, alert);
+                    // accounting
+                    this.accounting.account(new SendNotificationAccountingEvent(check.getSiteId(), alertRecord.getId(), check.getId(), AccountingNotificationType.ALERT, alert.getTo().size(), 0, null));
+                }
+                // publish alert update
+                this.publishAlertUpdate(alertRecord, new AlertUpdate(alertRecord.toMOUnsafe()));
+            }
+        }
+    }
+    
+    protected void processEscalation(Check<?,?> check, BergamotDB db)
+    {
+        // get the alert information
+        Alert alert = db.getCurrentAlertForCheck(check.getId());
+        if (alert != null && (! alert.isAcknowledged()) && (! alert.isRecovered()))
+        {
+            long alertDuration = System.currentTimeMillis() - alert.getRaised().getTime();
+            logger.debug("Processing escalations for " + check.getType() + " " + check.getId() + " alert duration: " + alertDuration);
+            // current check state
+            CheckState state = check.getState();
+            Calendar now = Calendar.getInstance();
+            // evaluate the escalation policies for this check
+            List<Escalation> escalations = new LinkedList<Escalation>();
+            check.getNotifications().evalEscalations(alertDuration, state.getStatus(), now, escalations);
+            // evaluate the escalation policies for the contacts which were notified
+            for (Contact notified : alert.getNotified())
+            {
+                notified.getNotifications().evalEscalations(alertDuration, state.getStatus(), now, escalations);
+            }
+            if (! escalations.isEmpty())
+            {
+                // compute the minimum escalation threshold we found
+                long after = escalations.stream().map((e) -> e.getAfter()).filter((a) -> a > alert.getEscalationThreshold()).min(Long::compare).orElse(-1L);
+                if (after > 0 && after > alert.getEscalationThreshold())
+                {
+                    // produce the list of contacts to whom the escalated alert should be sent
+                    Set<ContactMO> escalateTo = new HashSet<ContactMO>();
+                    for (Escalation escalation : escalations)
+                    {
+                        if (escalation.getAfter() == after)
+                        {
+                            // should we renotify the original contacts of the alert
+                            if (escalation.isRenotify())
+                            {
+                                /* 
+                                 * TODO: Should we apply the notification settings again, or is this 
+                                 *       an explicit override.  For example if a contact was originally 
+                                 *       notified, but now is not to be notified, should we renotify?
+                                 *       
+                                 *       Currently we forcefully renotify all original contacts
+                                 */
+                                alert.getNotified().stream().map(Contact::toMOUnsafe).forEach(escalateTo::add);
+                            }
+                            // compute any new contacts to notify
+                            escalateTo.addAll(escalation.getContactsToNotify(check, state.getStatus(), now));
+                        }
+                    }
+                    // do we have anyone to escalate too
+                    if (! escalateTo.isEmpty())
+                    {
+                        logger.info("Raising escalation for alert " + alert.getId() + " after " + after + " to [" + escalateTo.stream().map(ContactMO::getName).collect(Collectors.joining(", ")) + "]");
+                        // record the escalation
+                        if (! alert.isEscalated())
+                        {
+                            alert.setEscalated(true);
+                            alert.setEscalatedAt(new Timestamp(System.currentTimeMillis()));
+                            alert.setEscalationThreshold(after);
+                            db.setAlert(alert);
+                        }
+                        else
+                        {
+                            // update the escalation threshold
+                            db.setAlertEscalationThreshold(alert.getId(), after);
+                            alert.setEscalationThreshold(after);
+                        }
+                        AlertEscalation alertEscalation = new AlertEscalation();
+                        alertEscalation.setEscalationId(UUID.randomUUID());
+                        alertEscalation.setAlertId(alert.getId());
+                        alertEscalation.setAfter(after);
+                        alertEscalation.setEscalatedAt(new Timestamp(System.currentTimeMillis()));
+                        alertEscalation.setNotifiedIds(escalateTo.stream().map((c) -> c.getId()).collect(Collectors.toList()));
+                        db.setAlertEscalation(alertEscalation);
+                        // send the notification
+                        SendAlert sendAlert = alert.createEscalatedAlertNotification(now, new LinkedList<ContactMO>(escalateTo));
+                        if (sendAlert != null && (! sendAlert.getTo().isEmpty()))
+                        {
+                            logger.warn("Sending escalated alert for " + check);
+                            this.publishNotification(check, sendAlert);
+                            // accounting
+                            this.accounting.account(new SendNotificationAccountingEvent(check.getSiteId(), sendAlert.getId(), check.getId(), AccountingNotificationType.ALERT, sendAlert.getTo().size(), alertEscalation.getAfter(), alertEscalation.getEscalationId()));
+                        }
+                        // publish alert update
+                        this.publishAlertUpdate(alert, new AlertUpdate(alert.toMOUnsafe()));
+                    }
+                }
+            }
         }
     }
     
@@ -315,6 +490,26 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         if (resultMO.isOk() != resultStatus.isOk())
         {
             resultMO.setOk(resultStatus.isOk());
+        }
+        // collect the checks that we are dependent upon
+        // we cannot reach a hard state until all dependencies 
+        // checks are in a hard state
+        boolean hasDependencies = check.hasDependencies();
+        boolean dependenciesAreAllHard = true;
+        boolean dependenciesAreAllOk = true;
+        UUID encompassingAlertId = null;
+        if (hasDependencies)
+        {
+            for (Check<?,?> dependency : check.getDepends())
+            {
+                CheckState dependencyState = dependency.getState();
+                dependenciesAreAllHard &= dependencyState.isHard();
+                dependenciesAreAllOk   &= dependencyState.isHardOk();
+                // get the alert id which encompasses us
+                if (dependencyState.isHardNotOk() && encompassingAlertId == null)
+                    encompassingAlertId = dependencyState.getCurrentAlertId();
+            }
+            logger.debug("Dependencies for check " + check.getId() + " are all hard: " + dependenciesAreAllHard + " and all ok: " + dependenciesAreAllOk);
         }
         // the next state
         CheckState nextState = currentState.clone();
@@ -327,6 +522,14 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         // is this check entering downtime?
         nextState.setInDowntime(check.isInDowntime());
         nextState.setSuppressed(check.isSuppressed());
+        // has the current alert been acknowledged
+        if (currentState.getCurrentAlertId() != null)
+        {
+            Alert currentAlert = currentState.getCurrentAlert();
+            currentState.setAcknowledged(currentAlert == null ? false : currentAlert.isAcknowledged());
+        }
+        // is the status of this alert encompassed by any other check
+        nextState.setEncompassed(dependenciesAreAllHard && (! dependenciesAreAllOk));
         // compute the transition
         // do we have a state change
         if (currentState.isOk() ^ nextState.isOk())
@@ -340,44 +543,98 @@ public class DefaultResultProcessor extends AbstractResultProcessor
             }
             // we've changed state
             nextState.setLastStateChange(new Timestamp(System.currentTimeMillis()));
-            // begin or immediately transition
-            if (check.computeCurrentAttemptThreshold(nextState) > 1)
+            // immediately go to a hard state or start the transition
+            if (check.computeCurrentAttemptThreshold(nextState) <= 1 && ((! hasDependencies) || dependenciesAreAllHard))
+            {
+                // we can only enter a hard state if we have no dependencies
+                // or all the dependencies are in a hard state
+                // immediately enter hard state
+                nextState.setHard(true);
+                nextState.setTransitioning(false);
+                nextState.setAttempt(check.computeCurrentAttemptThreshold(nextState));
+                if (nextState.isAlert())
+                {
+                    nextState.setCurrentAlertId(encompassingAlertId == null ? Site.randomId(check.getSiteId()) : encompassingAlertId);
+                    nextState.setAcknowledged(false);
+                }
+                if (nextState.isRecovery())
+                {
+                    nextState.setCurrentAlertId(null);
+                    nextState.setAcknowledged(false);
+                }
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(true)
+                    .hardChange(true)
+                    .alert(nextState.isAlert())
+                    .recovery(nextState.isRecovery());
+            }
+            else
             {
                 // start the transition
                 nextState.setHard(false);
                 nextState.setTransitioning(true);
                 nextState.setAttempt(1);               
-                return new Transition(currentState, nextState, true, false, false, false);
-            }
-            else
-            {
-                // immediately enter hard state
-                nextState.setHard(true);
-                nextState.setTransitioning(false);
-                nextState.setAttempt(check.computeCurrentAttemptThreshold(nextState));
-                return new Transition(currentState, nextState, true, true, (nextState.isOk() ^ nextState.isLastHardOk()) && (! nextState.isOk()), (nextState.isOk() ^ nextState.isLastHardOk()) && nextState.isOk());
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(true)
+                    .hardChange(false)
+                    .alert(false)
+                    .recovery(false);
             }
         }
         else if (currentState.isHard())
         {
             // steady state
-            return new Transition(currentState, nextState, false, false, false, false);
+            return new Transition()
+                .previousState(currentState)
+                .nextState(nextState)
+                .stateChange(false)
+                .hardChange(false)
+                .alert(false)
+                .recovery(false);
         }
         else
         {
             // during transition
             nextState.setAttempt(currentState.getAttempt() + 1);
             // have we reached a hard state
-            if (nextState.getAttempt() >= check.computeCurrentAttemptThreshold(nextState))
+            if (nextState.getAttempt() >= check.computeCurrentAttemptThreshold(nextState) && ((! hasDependencies) || dependenciesAreAllHard))
             {
+                // we can only enter a hard state if we have no dependencies
+                // or all the dependencies are in a hard state
                 nextState.setHard(true);
                 nextState.setTransitioning(false);
                 nextState.setAttempt(check.computeCurrentAttemptThreshold(nextState));
-                return new Transition(currentState, nextState, false, true, (nextState.isOk() ^ nextState.isLastHardOk()) && (! nextState.isOk()), (nextState.isOk() ^ nextState.isLastHardOk()) && nextState.isOk());
+                if (nextState.isAlert())
+                {
+                    nextState.setCurrentAlertId(encompassingAlertId == null ? Site.randomId(check.getSiteId()) : encompassingAlertId);
+                    nextState.setAcknowledged(false);
+                }
+                if (nextState.isRecovery())
+                {
+                    nextState.setCurrentAlertId(null);
+                    nextState.setAcknowledged(false);
+                }
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(false)
+                    .hardChange(true)
+                    .alert(nextState.isAlert())
+                    .recovery(nextState.isRecovery());
             }
             else
             {
-                return new Transition(currentState, nextState, false, false, false, false);
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(false)
+                    .hardChange(false)
+                    .alert(false)
+                    .recovery(false);
             }
         }
     }
@@ -400,9 +657,10 @@ public class DefaultResultProcessor extends AbstractResultProcessor
             }
             processedVirtualChecks.add(referencedBy.getId());
             // update the status of the check
-            boolean ok = referencedBy.getCondition().computeOk();
-            Status status = referencedBy.getCondition().computeStatus();
-            boolean allHard = referencedBy.getCondition().isAllDependenciesHard();
+            VirtualCheckExpressionContext context = db.createVirtualCheckContext(check.getSiteId(), null);
+            boolean ok = referencedBy.getCondition().computeOk(context);
+            Status status = referencedBy.getCondition().computeStatus(context);
+            boolean allHard = referencedBy.getCondition().isAllDependenciesHard(context);
             // update the check
             Transition virtualTransition = this.applyVirtualResult(referencedBy, referencedBy.getState(), ok, status, allHard, resultMO);
             logger.info("Virtual state change for " + referencedBy.getType() + "::" + referencedBy.getId() + " => hard state change: " + transition.hardChange + ", state change: " + transition.stateChange + " triggered by " + check.getType() + "::" + check.getId());
@@ -441,7 +699,7 @@ public class DefaultResultProcessor extends AbstractResultProcessor
 
     protected Transition applyVirtualResult(VirtualCheck<?, ?> check, CheckState currentState, boolean ok, Status status, boolean allHard, ResultMO cause)
     {
-     // the next state
+        // the next state
         CheckState nextState = currentState.clone();
         // apply the result to the next state
         nextState.setOk(ok);
@@ -452,6 +710,14 @@ public class DefaultResultProcessor extends AbstractResultProcessor
         // is this check entering downtime?
         nextState.setInDowntime(check.isInDowntime());
         nextState.setSuppressed(check.isSuppressed());
+        // has the current alert been acknowledged
+        if (currentState.getCurrentAlertId() != null)
+        {
+            Alert currentAlert = currentState.getCurrentAlert();
+            currentState.setAcknowledged(currentAlert.isAcknowledged());
+        }
+        // a virtual check can never be encompassed
+        nextState.setEncompassed(false);
         // compute the transition
         // do we have a state change
         if (currentState.isOk() ^ nextState.isOk())
@@ -472,7 +738,13 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 nextState.setHard(false);
                 nextState.setTransitioning(true);
                 nextState.setAttempt(0);               
-                return new Transition(currentState, nextState, true, false, false, false);
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(true)
+                    .hardChange(false)
+                    .alert(false)
+                    .recovery(false);
             }
             else
             {
@@ -480,13 +752,35 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 nextState.setHard(true);
                 nextState.setTransitioning(false);
                 nextState.setAttempt(0);
-                return new Transition(currentState, nextState, true, true, (nextState.isOk() ^ nextState.isLastHardOk()) && (! nextState.isOk()), (nextState.isOk() ^ nextState.isLastHardOk()) && nextState.isOk());
+                if (nextState.isAlert())
+                {
+                    nextState.setCurrentAlertId(Site.randomId(check.getSiteId()));
+                    nextState.setAcknowledged(false);
+                }
+                if (nextState.isRecovery())
+                {
+                    nextState.setCurrentAlertId(null);
+                    nextState.setAcknowledged(false);
+                }
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(true)
+                    .hardChange(true)
+                    .alert(nextState.isAlert())
+                    .recovery(nextState.isRecovery());
             }
         }
         else if (currentState.isHard())
         {
             // steady state
-            return new Transition(currentState, nextState, false, false, false, false);
+            return new Transition()
+                .previousState(currentState)
+                .nextState(nextState)
+                .stateChange(false)
+                .hardChange(false)
+                .alert(false)
+                .recovery(false);
         }
         else
         {
@@ -496,11 +790,33 @@ public class DefaultResultProcessor extends AbstractResultProcessor
                 nextState.setHard(true);
                 nextState.setTransitioning(false);
                 nextState.setAttempt(0);
-                return new Transition(currentState, nextState, false, true, (nextState.isOk() ^ nextState.isLastHardOk()) && (! nextState.isOk()), (nextState.isOk() ^ nextState.isLastHardOk()) && nextState.isOk());
+                if (nextState.isAlert())
+                {
+                    nextState.setCurrentAlertId(Site.randomId(check.getSiteId()));
+                    nextState.setAcknowledged(false);
+                }
+                if (nextState.isRecovery())
+                {
+                    nextState.setCurrentAlertId(null);
+                    nextState.setAcknowledged(false);
+                }
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(false)
+                    .hardChange(true)
+                    .alert(nextState.isAlert())
+                    .recovery(nextState.isRecovery());
             }
             else
             {
-                return new Transition(currentState, nextState, false, false, false, false);
+                return new Transition()
+                    .previousState(currentState)
+                    .nextState(nextState)
+                    .stateChange(false)
+                    .hardChange(false)
+                    .alert(false)
+                    .recovery(false);
             }
         }
     }
@@ -527,32 +843,85 @@ public class DefaultResultProcessor extends AbstractResultProcessor
  
     public static class Transition
     {
-        public final CheckState previousState;
+        public CheckState previousState;
         
-        public final CheckState nextState;
+        public CheckState nextState;
         
-        public final boolean stateChange;
+        public boolean stateChange;
         
-        public final boolean hardChange;
+        public boolean hardChange;
         
-        public final boolean alert;
+        public boolean alert;
         
-        public final boolean recovery;
+        public boolean recovery;
 
-        public Transition(CheckState previousState, CheckState nextState, boolean stateChange, boolean hardChange, boolean alert, boolean recovery)
+        public Transition()
         {
             super();
+        }
+        
+        public Transition previousState(CheckState previousState)
+        {
             this.previousState = previousState;
+            return this;
+        }
+        
+        public Transition nextState(CheckState nextState)
+        {
             this.nextState = nextState;
+            return this;
+        }
+        
+        public Transition stateChange(boolean stateChange)
+        {
             this.stateChange = stateChange;
+            return this;
+        }
+        
+        public Transition hardChange(boolean hardChange)
+        {
             this.hardChange = hardChange;
+            return this;
+        }
+        
+        public Transition alert(boolean alert)
+        {
             this.alert = alert;
+            return this;
+        }
+        
+        public Transition recovery(boolean recovery)
+        {
             this.recovery = recovery;
+            return this;
         }
         
         public CheckTransition toCheckTransition(UUID id, UUID checkId, Timestamp appliedAt)
         {
             return new CheckTransition(id, checkId, appliedAt, this.stateChange, this.hardChange, this.alert, this.recovery, this.previousState, this.nextState);
+        }
+        
+        public boolean hasChanged()
+        {
+            return this.stateChange || 
+            this.hardChange || 
+            this.alert || 
+            this.recovery || 
+            this.nextState.getStatus() != this.previousState.getStatus() || 
+            this.nextState.isInDowntime() != this.previousState.isInDowntime() || 
+            this.nextState.isSuppressed() != this.previousState.isSuppressed() || 
+            this.nextState.isAcknowledged() != this.previousState.isAcknowledged() || 
+            this.nextState.isEncompassed() != this.previousState.isEncompassed();
+        }
+        
+        public boolean hasSchedulingChanged()
+        {
+            return this.stateChange || this.hardChange;
+        }
+        
+        public boolean hasGotWorse()
+        {
+            return this.previousState.isHardNotOk() && this.nextState.isHardNotOk() && this.nextState.getStatus().isWorseThan(this.previousState.getStatus());
         }
     }
 }

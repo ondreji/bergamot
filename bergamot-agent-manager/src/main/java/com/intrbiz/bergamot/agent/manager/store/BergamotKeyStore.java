@@ -11,6 +11,11 @@ import com.intrbiz.bergamot.crypto.util.CertificatePair;
 public interface BergamotKeyStore
 {
     /**
+     * Sanity check this keystore
+     */
+    void check();
+    
+    /**
      * Do we have a Root CA stored
      */
     boolean hasRootCA();
@@ -54,6 +59,21 @@ public interface BergamotKeyStore
      * Store the given agent certificate, private key is optional
      */
     void storeAgent(UUID siteId, UUID agentId, CertificatePair pair);
+    
+    /**
+     * Do we have an template stored for the given site and id
+     */
+    boolean hasTemplate(UUID siteId, UUID templateId);
+    
+    /**
+     * Load the template certificate, private key is optional
+     */
+    CertificatePair loadTemplate(UUID siteId, UUID templateId);
+    
+    /**
+     * Store the given template certificate, private key is optional
+     */
+    void storeTemplate(UUID siteId, UUID templateId, CertificatePair pair);
     
     /**
      * Do we have a server stored for the given site and name

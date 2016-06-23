@@ -8,6 +8,7 @@ import com.intrbiz.Util;
 import com.intrbiz.bergamot.config.model.CheckCfg;
 import com.intrbiz.bergamot.config.model.RealCheckCfg;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.model.Alert;
 import com.intrbiz.bergamot.model.BergamotObject;
 import com.intrbiz.bergamot.model.Contact;
 import com.intrbiz.bergamot.model.Status;
@@ -129,6 +130,24 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
      */
     @SQLColumn(index = 17, name = "suppressed", since = @SQLVersion({ 3, 4, 0 }))
     private boolean suppressed;
+    
+    /**
+     * Is this check currently acknowledged
+     */
+    @SQLColumn(index = 18, name = "acknowledged", since = @SQLVersion({ 3, 28, 0 }))
+    private boolean acknowledged;
+    
+    /**
+     * Is this check currently encompassed by an alert on a dependent check
+     */
+    @SQLColumn(index = 19, name = "encompassed", since = @SQLVersion({ 3, 28, 0 }))
+    private boolean encompassed;
+    
+    /**
+     * The current alert id for this check
+     */
+    @SQLColumn(index = 20, name = "current_alert_id", since = @SQLVersion({ 3, 28, 0 }))
+    private UUID currentAlertId;
 
     public CheckState()
     {
@@ -227,6 +246,14 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
     public boolean isHardOk()
     {
         return this.hard && this.ok;
+    }
+    
+    /**
+     * Are we in a hard not OK state, IE: this.hard && ! this.ok
+     */
+    public boolean isHardNotOk()
+    {
+        return this.hard && (! this.ok);
     }
 
     public void setHard(boolean hard)
@@ -336,6 +363,82 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
     {
         return this.suppressed || this.inDowntime;
     }
+    
+    /**
+     * Should this check currently be ignore.
+     * This means that the check is currently 
+     * suppressed, in downtime, acknowledged 
+     * or encompassed.
+     * @return true if this check should be ignored
+     */
+    public boolean isIgnored()
+    {
+        return this.suppressed || this.inDowntime || this.acknowledged || this.encompassed;
+    }
+
+    public boolean isAcknowledged()
+    {
+        return acknowledged;
+    }
+
+    public void setAcknowledged(boolean acknowledged)
+    {
+        this.acknowledged = acknowledged;
+    }
+
+    public boolean isEncompassed()
+    {
+        return encompassed;
+    }
+
+    public void setEncompassed(boolean encompassed)
+    {
+        this.encompassed = encompassed;
+    }
+
+    public UUID getCurrentAlertId()
+    {
+        return currentAlertId;
+    }
+
+    public void setCurrentAlertId(UUID currentAlertId)
+    {
+        this.currentAlertId = currentAlertId;
+    }
+    
+    public Alert getCurrentAlert()
+    {
+        if (this.getCurrentAlertId() != null)
+        {
+            try (BergamotDB db = BergamotDB.connect())
+            {
+                return db.getAlert(this.getCurrentAlertId());
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Does this state represent an alert
+     * @return true if this state is an alert
+     */
+    public boolean isAlert()
+    {
+        return (this.isOk() ^ this.isLastHardOk()) 
+            && (! this.isOk())
+            && (! this.isSuppressedOrInDowntime());
+    }
+    
+    /**
+     * Does this state represent a recovery
+     * @return true if this state is a recovery
+     */
+    public boolean isRecovery()
+    {
+        return (this.isOk() ^ this.isLastHardOk()) 
+            && this.isOk()
+            && (! this.isSuppressedOrInDowntime());
+    }
 
     @Override
     public CheckStateMO toMO(Contact contact, EnumSet<MOFlag> options)
@@ -356,6 +459,9 @@ public class CheckState extends BergamotObject<CheckStateMO> implements Cloneabl
         mo.setLastHardOutput(this.getLastHardOutput());
         mo.setInDowntime(this.isInDowntime());
         mo.setSuppressed(this.isSuppressed());
+        mo.setAcknowledged(this.isAcknowledged());
+        mo.setEncompassed(this.isEncompassed());
+        mo.setCurrentAlert(this.getCurrentAlertId());
         return mo;
     }
     

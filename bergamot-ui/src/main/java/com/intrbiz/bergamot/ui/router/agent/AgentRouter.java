@@ -3,6 +3,7 @@ package com.intrbiz.bergamot.ui.router.agent;
 import java.io.IOException;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.sql.Timestamp;
 import java.util.UUID;
 
 import com.intrbiz.balsa.engine.route.Router;
@@ -14,7 +15,9 @@ import com.intrbiz.bergamot.crypto.util.CertificateRequest;
 import com.intrbiz.bergamot.crypto.util.PEMUtil;
 import com.intrbiz.bergamot.crypto.util.SerialNum;
 import com.intrbiz.bergamot.data.BergamotDB;
+import com.intrbiz.bergamot.metadata.IsaObjectId;
 import com.intrbiz.bergamot.model.AgentRegistration;
+import com.intrbiz.bergamot.model.Contact;
 import com.intrbiz.bergamot.model.Site;
 import com.intrbiz.bergamot.ui.BergamotApp;
 import com.intrbiz.metadata.Any;
@@ -62,15 +65,14 @@ public class AgentRouter extends Router<BergamotApp>
     public void generateAgentConfig(BergamotDB db, @SessionVar("site") Site site, @Param("common-name") @CheckStringLength(min = 1, max = 255, mandatory = true) String commonName)
     {
         // is an agent already registered
-        AgentRegistration agentReg = db.getAgentRegistrationByName(site.getId(), commonName);
-        if (agentReg != null) throw new RuntimeException("Cannot generate configuration for an agent which already exists!");
+        AgentRegistration existingAgent = db.getAgentRegistrationByName(site.getId(), commonName);
         // assign id
-        UUID agentId = var("agentId", Site.randomId(site.getId()));
+        UUID agentId = var("agentId", existingAgent != null ? existingAgent.getId() : Site.randomId(site.getId()));
         var("commonName", commonName);
         // generate
         Certificate     rootCert = action("get-root-ca");
         Certificate     siteCert = action("get-site-ca", site.getId());
-        CertificatePair pair     = action("generate-agent", site.getId(), agentId, commonName);
+        CertificatePair pair     = action("generate-agent", site.getId(), agentId, commonName, ((Contact) currentPrincipal()).getId());
         // build the config
         BergamotAgentCfg cfg = new BergamotAgentCfg();
         cfg.setCaCertificate(padCert(PEMUtil.saveCertificate(rootCert)));
@@ -93,14 +95,13 @@ public class AgentRouter extends Router<BergamotApp>
         // parse the certificate request
         CertificateRequest req = PEMUtil.loadCertificateRequest(certReq);
         // is an agent already registered
-        AgentRegistration agentReg = db.getAgentRegistrationByName(site.getId(), req.getCommonName());
-        if (agentReg != null) throw new RuntimeException("Cannot generate configuration for an agent which already exists!");
+        AgentRegistration existingAgent = db.getAgentRegistrationByName(site.getId(), req.getCommonName());
         // generate agent it
-        UUID agentId = var("agentId", Site.randomId(site.getId()));
+        UUID agentId = var("agentId", existingAgent != null ? existingAgent.getId() : Site.randomId(site.getId()));
         // sign
         Certificate rootCrt  = action("get-root-ca");
         Certificate siteCrt  = action("get-site-ca", site.getId());
-        Certificate agentCrt = action("sign-agent", site.getId(), agentId, req);
+        Certificate agentCrt = action("sign-agent", site.getId(), agentId, req, ((Contact) currentPrincipal()).getId());
         // store the registration
         db.setAgentRegistration(new AgentRegistration(site.getId(), agentId, req.getCommonName(), SerialNum.fromBigInt(((X509Certificate) agentCrt).getSerialNumber()).toString()));
         // display
@@ -108,6 +109,23 @@ public class AgentRouter extends Router<BergamotApp>
         var("siteCaCrt", PEMUtil.saveCertificate(siteCrt));
         var("caCrt",     PEMUtil.saveCertificate(rootCrt));
         encode("agent/signed-agent");
+    }
+    
+    @Post("/revoke")
+    @WithDataAdapter(BergamotDB.class)
+    public void revokeAgent(BergamotDB db, @SessionVar("site") Site site, @Param("id") @IsaObjectId() UUID agentId) throws Exception
+    {
+        // lookup the agent registration
+        AgentRegistration agent = db.getAgentRegistration(agentId);
+        if (agent != null)
+        {
+            agent.setRevoked(true);
+            agent.setRevokedOn(new Timestamp(System.currentTimeMillis()));
+            db.setAgentRegistration(agent);
+            // TODO: we should publish a CRL to the agent workers and force a disconnect
+        }
+        // encode the index
+        redirect(path("/agent/"));
     }
     
     public static String padCert(String cert)

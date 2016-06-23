@@ -39,5 +39,17 @@
     	<groupId>com.intrbiz.util</groupId>
     	<artifactId>scripting</artifactId>
     </dependency>
+    <dependency>
+    	<groupId>com.intrbiz.bergamot</groupId>
+    	<artifactId>bergamot-healthcheck-agent</artifactId>
+    </dependency>
+    <dependency>
+		<groupId>com.intrbiz.bergamot</groupId>
+		<artifactId>bergamot-accounting-model</artifactId>
+	</dependency>
+    <dependency>
+    	<groupId>com.intrbiz.bergamot</groupId>
+    	<artifactId>bergamot-accounting-consumer</artifactId>
+    </dependency>
   </dependencies>
 </project>
